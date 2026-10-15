@@ -21,7 +21,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from .areas import CALIFORNIA, RETURN, SIGNED_SCOPES, area_of_line, california_fields, document_owners, scopes_of_line
+from .areas import (
+    CALIFORNIA, RETURN, SIGNED_SCOPES, area_of_line, california_fields, document_owners, scopes_of_line,
+)
 from .packet import Packet, parse_page_ref, ref_kind
 
 if TYPE_CHECKING:
@@ -59,8 +61,12 @@ class ConflictRule:
         if event.action == "undo":
             # An undo is self-describing: the store keeps the reversed event's targets in the payload.
             targets += event.payload.get("undoes", {}).get("targets", [])
+        return self.refs_scope(targets)
+
+    def refs_scope(self, refs: list[str]) -> set[str]:
+        """The references themselves plus every signed scope they touch ('area:<id>')."""
         result: set[str] = set()
-        for t in targets:
+        for t in refs:
             result.add(t)
             kind = ref_kind(t)
             if kind == "line":

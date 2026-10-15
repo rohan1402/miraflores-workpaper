@@ -71,6 +71,12 @@ def check(ctx: Context) -> list[Finding]:
 _NEW = "<new>"
 
 
+def prior_line_key(key: str, label: str, prior: dict) -> str | None:
+    """The 2024 line to compare a 2025 line with (matched by payer for numbered sub-lines), or None."""
+    match = _prior_match(key, label, prior)
+    return None if match in (None, _NEW) else match
+
+
 def _prior_match(key: str, label: str, prior: dict) -> str | None:
     """The prior-year line to compare with, _NEW for a new payer, or None if there is nothing to compare."""
     if key.count(".") < 2:
