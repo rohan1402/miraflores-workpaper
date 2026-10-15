@@ -72,7 +72,7 @@ At v3 the federal return shows $4,220 due. After these corrections it becomes ro
 ## Errors with no direct dollar effect (still must be caught)
 
 - **E16. Care provider EIN misread.** D62 printed "Tax ID 74-3829156"; extracted ev-1045 "74-3829516" (0.97). Flows to F2441.1b. Wrong provider TIN on Form 2441 undermines the $5,000 dependent care exclusion. Surfaced by value-vs-page check (one of only 11 values that do not appear on their page).
-- **E17. Theo's SSN.** Household (client organizer) 666-74-3309; Social Security card D71 (arrived 7/13/2026) 666-74-3390. Caused the 7/13 federal e-file rejection R0000-504-02 and the California hold. Surfaced by "Identity verified" required step: dependent SSNs have no document behind them until D71.
+- **E17. Theo's SSN.** Household (client organizer) 666-74-3309; Social Security card D71 (arrived 7/13/2026) 666-74-3390. Caused the 7/13 federal e-file rejection R0000-504-02 and the California hold. Surfaced by "Identity verified" required step. Found while building the checker: the 2024 return D06 (received 1/21/2026) already prints 666-74-3390 for Theo, so this was catchable at intake, six months before the rejection. Replaying the checker as of March 2026 shows it.
 - **E18. Duplicate W-2 image.** D10 is a phone photo of D09. Engine counted once (F1040.1a note), but D10's 17 values are all 0.99 and could be verified into a second set of wages. Surfaced by document disposition = duplicate.
 - **E19. Superseded 1099.** D31 (corrected) replaces D30: M9 basis 6,900 to 4,880, M6 wash 735 to 512, M14 short to long term (acquired 2024-10-15 to 2024-09-15). Engine handled in v2. Surfaced by disposition = superseded and sign-off reopening.
 - **E20. Handwritten church receipt.** D64 printed "$?,500.00 ... first digit ambiguous (could be read as 1 or 7)"; extracted $1,500 at 0.41. msg-08: parish confirmed $1,500 by phone, bank check #2207. Amount resolved, but the receipt has no goods-or-services statement, which a gift of $250+ needs. Action: obtain a proper acknowledgment.
@@ -123,18 +123,18 @@ At v3 the federal return shows $4,220 due. After these corrections it becomes ro
 
 ## What this means for the checker (build list)
 
-Each finding maps to a check that does not trust the engine:
+Each finding maps to a check that does not trust the engine. Built in `backend/workpaper/checker/` as R01 to R13 (one file each); `backend/tests/test_checker.py` asserts every item below is found with the tax effect in the summary table.
 
-1. **Value vs page**: every extracted value must appear on its printed page (E16; 11 of 3,012 fail).
-2. **Duplicate document / page**: same issuer, same amounts, or page text that says "second scan" (E6, E18).
-3. **Same money, two sources**: a line whose sources include two documents describing the same payment (E3, E8, E10).
-4. **Unmatched supplemental**: broker basis zero or "not reported" while a supplemental statement or W-2 box 14 shows basis (E1).
-5. **Agency reconciliation**: payments vs IRS transcript and FTB account (E12, E13).
-6. **Partial extraction**: any unread page is an open item until dispositioned (E15).
-7. **Client answer vs treatment**: questionnaire or message contradicts a line or document (E4, E5, qa-14, qa-15, qa-31).
-8. **Period / year conflict**: document year field, residency dates, closing-statement proration vs line use (E2, E7, E13).
-9. **Stale reference**: line cites a reference value from the wrong year (E11).
-10. **Prior-year variance**: firm standard over 10% and over $1,000 (E6 mileage, SEHI 0 to 14,400, gross receipts).
-11. **Classification prompt**: repairs over a threshold or with replace/install wording (E9).
-12. **Identity**: SSNs and names without a supporting document (E17).
-13. **Evidence newer than computation**: messages or documents dated after the version they would change (E14, msg-08).
+1. **Value vs page** (R01): every extracted value must appear on its printed page, and names and tax IDs a line prints must match its document (E16; E20; E29; 11 of 3,012 values fail).
+2. **Duplicate document / page** (R02): same issuer, same values; corrected copy supersedes; two pages with the same values (E6, E18, E19).
+3. **Same money, two sources** (R03): a total that adds two documents where one says it already contains the other (E3, E8, E10).
+4. **Unmatched supplemental** (R04): broker basis zero or "not reported" while a supplemental statement or W-2 box 14 shows basis (E1; C6 listed as missing basis).
+5. **Agency reconciliation** (R05): payments vs IRS transcript and FTB account (E12, E13; extension payment ties).
+6. **Partial extraction** (R06): any unread page is an open item until dispositioned; broker lots re-added against the printed summary (E15; D07, D69, D70, D72; Brightpath and Coinhaven tie).
+7. **Client answer vs treatment** (R07): questionnaire, call note or message contradicts a line or document (E4, E5, E21, qa-14, qa-15, qa-31).
+8. **Period / year conflict** (R08): document year field, residency dates, closing-statement proration vs line use (E2, E7, E13).
+9. **Stale reference** (R09): line cites a reference value from the wrong year (E11).
+10. **Prior-year variance** (R10): firm standard over 10% and over $1,000, sub-lines matched by payer (E6 mileage, SEHI 0 to 14,400, gross receipts, Northlake Bank as a new interest line).
+11. **Classification and substantiation prompt** (R11): repairs over the de minimis amount or with replace/install wording; gifts of $250+ without a goods-or-services statement (E9, E20).
+12. **Identity** (R12): SSNs compared with every document that prints them (E17).
+13. **Evidence newer than computation** (R13): messages or documents dated after the version they would change (E14, msg-08, msg-10, D71).

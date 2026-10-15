@@ -1,0 +1,9 @@
+[project]
+name = "workpaper"
+version = "0.1.0"
+description = "MiraFlores tax workpaper: packet loader, event log, projection and checker"
+requires-python = ">=3.12"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

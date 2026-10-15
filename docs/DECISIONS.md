@@ -106,6 +106,48 @@ Context numbers: AGI $228,409 (2024) to $445,590 (2025); wages $156,039 to $212,
 
 ---
 
+## Step 1 build decisions (OPEN until Rohan locks them)
+
+Made while building the backend core (2026-10-14). Each one is a call Rohan can change. Code lives in `backend/workpaper/`.
+
+### D5. The checker knows tax forms, not this packet: OPEN
+
+Rules refer to form lines and boxes (Sch1.17, W-2 box 16, 1098-C box 4c), document types and printed page text. They never name a packet id (D10, ev-1045, qa-41). A test (`test_rules_do_not_name_packet_ids`) parses every rule file and fails if one does. The tests hold the answer key; the rules do not.
+
+- Why: otherwise the checker is a list of answers and finds nothing on the next client. This is the strongest interview defense of the checker.
+- Tradeoff: some rules read wording on the page ("reported on the Form 1098", "installed", "70%"). Real documents phrase things differently; a production version would extract those cues as fields. Say so on camera.
+- Result: all 16 dollar errors found with the ERRORS.md tax effect to the dollar; net -8,753 federal, -3,317 California, same as ERRORS.md.
+
+### D6. Event shape and what is stored vs derived: OPEN
+
+One row per act: actor, role, at, action, targets, payload, reason, base_tip. Rules:
+
+- Store what the person did and saw; derive everything computable. An adjustment stores from and to; its tax effect is computed from the version's rates every time.
+- A sign-off stores the version, every covered value and their fingerprint, so the record shows exactly what was signed even if code changes later.
+- Undo is a new event that points at the old one. SQLite triggers refuse UPDATE and DELETE on the events table.
+- An adjustment applies only while the engine value is still the one it was made against. If a new version changes the line, the adjustment goes stale and a person redoes it, rather than silently overriding new engine output.
+- The log must stay in time order, so replay to any date (`as_of`) is meaningful.
+
+### D7. The 409 rule: OPEN
+
+Guarded acts (sign-off, adjust, verify, accept, disposition, undo, standards) are refused if a newer state-changing event overlaps their scope. Scope = targets plus the work area of any line target. So a sign-off on Business is refused after someone adjusts SchC.9, but not after someone adjusts a payment. Notes, questions and views always append. The partner release is refused after any change at all.
+
+### D8. Computed lines belong to the return, not an area: OPEN (refines D3)
+
+AMT, NIIT, the QBI limit, credits that phase out with AGI, penalties and amount owed move whenever anything moves. Assigning AMT to wages (because of the ISO) made the corrected Meridian 1099 reopen the wages sign-off. These lines now sit under the partner's signature. Checked against the packet: v1 to v2 reopens only investments; v2 to v3 (the June K-1) reopens passthroughs, payments (extension payment), rentals (passive loss limit) and investments (K-1 interest), and never wages. That matches D3's examples.
+
+### D9. Findings have stable ids and are answered, not edited: OPEN
+
+Each finding has an id like `R05:F1040.26`. A person answers it with an adjustment, a disposition or a judgment call that points at the id. The checker reruns on every read: a fixed number makes the finding disappear; a judgment call marks it addressed; undoing the judgment reopens it. Total effect counts each line once (the payments reconciliation and the tax-year conflict both change F540NR.72).
+
+### D10. Partner release covers the bottom line plus large adjustments: OPEN
+
+The release fingerprints the version summary plus every adjustment whose estimated effect is over 1,000. A small receipt does not lift it; a large adjustment does (D3 example). Release is blocked by open review notes, unsigned areas, and large adjustments without partner approval.
+
+### D11. Messages never carry full SSNs: OPEN
+
+Finding messages show the last four digits. Full numbers live in `details` under keys starting with `ssn`, so step 2's role masking has one place to act. Step 1 exposes no endpoint with findings until masking exists.
+
 ## Build plan
 
 1. Hunt the remaining planted errors (6 leads above so far).
