@@ -130,7 +130,7 @@ Each finding maps to a check that does not trust the engine. Built in `backend/w
 3. **Same money, two sources** (R03): a total that adds two documents where one says it already contains the other (E3, E8, E10).
 4. **Unmatched supplemental** (R04): broker basis zero or "not reported" while a supplemental statement or W-2 box 14 shows basis (E1; C6 listed as missing basis).
 5. **Agency reconciliation** (R05): payments vs IRS transcript and FTB account (E12, E13; extension payment ties).
-6. **Partial extraction** (R06): any unread page is an open item until dispositioned; broker lots re-added against the printed summary (E15; D07, D69, D70, D72; Brightpath and Coinhaven tie).
+6. **Partial extraction** (R06): any unread page is an open item until dispositioned; broker lots re-added against the printed summary (E15; D07, D69, D70, D72; Brightpath and Coinhaven tie). A page that prints a line the return lacks stays open after the disposition, with its dollars in the total, until an adjustment adds the line or a judgment accepts leaving it off (E15: lot M18).
 7. **Client answer vs treatment** (R07): questionnaire, call note or message contradicts a line or document (E4, E5, E21, qa-14, qa-15, qa-31).
 8. **Period / year conflict** (R08): document year field, residency dates, closing-statement proration vs line use (E2, E7, E13).
 9. **Stale reference** (R09): line cites a reference value from the wrong year (E11).

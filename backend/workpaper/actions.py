@@ -38,9 +38,12 @@ def prepare(packet: Packet, state: State, result: CheckResult, scopes: ConflictR
     p = dict(payload or {})
     if action == "adjust":
         key = _one(targets, "line")[len("line:"):]
+        adds = None
         if key not in state.lines:
-            raise Refusal(422, [f"{key} is not a line on {state.version_id}"])
-        p = adjustment_payload(state, key, p.get("to"), p.get("finding"))
+            adds = result.proposed_line(key)
+            if adds is None:
+                raise Refusal(422, [f"{key} is not a line on {state.version_id}, and no finding proposes adding it."])
+        p = adjustment_payload(state, key, p.get("to"), p.get("finding"), adds=adds)
     elif action == "sign_off":
         area = _one(targets, "area")[len("area:"):]
         waiver = (p.get("waiver") or "").strip() or None
@@ -134,10 +137,12 @@ def _accept_document(packet, state, result, scopes, person, e) -> list[str]:
             return reasons + [f"{doc} looks like a copy of {f.details['duplicate_of']}. Record its disposition first."]
         if f.code == "SUPERSEDED_DOCUMENT" and f.subject == doc:
             return reasons + [f"{doc} is replaced by the corrected {f.details['by']}. Record its disposition first."]
+    named = disp.detail.get("pages", []) if disp and disp.disposition == "partial" else []
     for f in open_findings:
         if f.code == "PAGE_NOT_READ" and f.subject.startswith(f"{doc}#page"):
-            page = f.subject.split("#page")[1]
-            reasons.append(f"Page {page} of {doc} was never read. Record a partial disposition for it first.")
+            page = int(f.subject.split("#page")[1])
+            if page not in named:   # still open after the disposition only for the lot it prints, not the page
+                reasons.append(f"Page {page} of {doc} was never read. Record a partial disposition for it first.")
     return reasons
 
 

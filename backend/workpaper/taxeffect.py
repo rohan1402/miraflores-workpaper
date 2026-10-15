@@ -79,6 +79,15 @@ def _rate(rates: dict, category: str, key: str) -> float:
     return rates[category][key]
 
 
+def california_category_for_sale(residency: list[dict], sold: str) -> str | None:
+    """README: a sale during California residency is fully California-source (ca_source_income).
+    A sale after the move is not California income at all for a part-year resident."""
+    window = next(((r["from"], r["to"]) for r in residency if r["state"] == "CA" and r["status"] == "resident"), None)
+    if window and window[0] <= sold <= window[1]:
+        return "ca_source_income"
+    return None
+
+
 def gain_category(box: str) -> str:
     return "stcg" if box.upper() in SHORT_TERM_BOXES else "ltcg"
 

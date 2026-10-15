@@ -456,3 +456,15 @@ def test_a_document_finding_says_which_disposition_answers_it(client):
 def test_a_superseded_document_is_refused_for_one_reason_only(client):
     r = act(client, PRIYA, "accept_document", ["D30"], ACCEPT, reason="tied to the form")
     assert r.json()["refused"] == ["D30 is replaced by the corrected D31. Record its disposition first."]
+
+
+def test_the_card_offers_to_add_the_missing_lot_and_the_preview_matches(client):
+    fix = {f["id"]: f for f in client.get("/api/findings", headers=as_(PRIYA)).json()["findings"]}[E15]["fix"]
+    assert (fix["line"], fix["from"], fix["to"]) == ("F8949.B.M18", None, -60.0) and "Ironwood REIT" in fix["adds"]
+    preview = client.get("/api/estimate?line=F8949.B.M18&to=-60", headers=as_(PRIYA)).json()["effect"]
+    assert (preview["federal"], preview["california"]) == (-21, 0)   # sold after the move: no California effect
+
+
+def test_a_line_no_finding_proposes_cannot_be_added(client):
+    r = act(client, PRIYA, "adjust", ["line:F8949.B.ZZ9"], {"to": 5}, reason="made up")
+    assert r.status_code == 422 and "no finding proposes adding it" in r.json()["refused"][0]

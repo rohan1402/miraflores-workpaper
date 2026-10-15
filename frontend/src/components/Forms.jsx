@@ -55,7 +55,7 @@ export function VerifyForm({ targets, tip, what, onDone }) {
 }
 
 // Change a figure without losing the original. The estimate is previewed by the server before saving.
-export function AdjustForm({ line, current, tip, finding, suggested, onDone }) {
+export function AdjustForm({ line, current, tip, finding, suggested, adds, onDone }) {
   const { run, busy, error } = useAct();
   const [to, setTo] = useState(suggested ?? "");
   const [reason, setReason] = useState("");
@@ -77,7 +77,8 @@ export function AdjustForm({ line, current, tip, finding, suggested, onDone }) {
   };
   return (
     <form onSubmit={submit}>
-      <Field label={`New figure for ${line}`} hint={`Now ${figure(current, line)}. The original stays on record.`}>
+      <Field label={adds ? `Figure for the new line ${line}` : `New figure for ${line}`}
+             hint={adds ? `Not on the return yet. This adds it: ${adds}.` : `Now ${figure(current, line)}. The original stays on record.`}>
         <input type="number" step="any" value={to} onChange={(e) => setTo(e.target.value)} autoFocus />
       </Field>
       <Field label="Why">

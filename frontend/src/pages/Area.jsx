@@ -166,7 +166,9 @@ function LineRow({ row, names, picked, onPick }) {
       <td className="num">
         {figure(row.value, row.key)}
         {row.human_state?.state === "adjusted" && (
-          <div className="engine small muted">engine {figure(row.engine_value, row.key)}</div>
+          <div className="engine small muted">
+            {row.added_by ? "added: not on the engine's return" : `engine ${figure(row.engine_value, row.key)}`}
+          </div>
         )}
       </td>
       <td className={`num ${row.variance ? "flag" : "muted"}`}>{c ? `${money(c.diff)} ${pct(c.pct)}` : ""}</td>
@@ -202,7 +204,8 @@ function Account({ account, names }) {
       {account.reconciliation && (
         <div className="small muted account-tie">
           Printed summary proceeds {money(account.reconciliation.summary_proceeds, { cents: true })} = sum of{" "}
-          {account.reconciliation.lots} lots {money(account.reconciliation.lot_proceeds, { cents: true })}.
+          {account.reconciliation.lots} lots {money(account.reconciliation.lot_proceeds, { cents: true })}
+          {account.reconciliation.added_lots > 0 && ` (${account.reconciliation.added_lots} added by a person from a page the pipeline never read)`}.
         </div>
       )}
       {open && <LineTable rows={account.lot_rows} names={names} compact />}

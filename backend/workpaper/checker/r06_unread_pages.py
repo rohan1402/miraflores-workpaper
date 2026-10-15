@@ -19,7 +19,7 @@ from .common import DISAGREEMENT, OPEN_ITEM, Change, Context, Finding, amounts_i
 
 BROKER_TYPES = {"1099-composite", "1099-B", "1099-DA"}
 LOT_ON_PAGE = re.compile(
-    r"(?P<lot>[A-Z]+\d+) (?P<desc>.+?) .*?acquired (?P<acquired>\d{4}-\d{2}-\d{2}) sold (?P<sold>\d{4}-\d{2}-\d{2}) "
+    r"(?P<lot>[A-Z]+\d+) (?P<desc>.+?)(?: [\d.]+ sh)? acquired (?P<acquired>\d{4}-\d{2}-\d{2}) sold (?P<sold>\d{4}-\d{2}-\d{2}) "
     r"proceeds (?P<proceeds>[\d,]+\.\d{2}) basis (?P<basis>[\d,]+\.\d{2}) (?P<term>short|long)-term (?P<covered>non)?covered"
 )
 
@@ -65,15 +65,19 @@ def _summary_vs_lots(ctx: Context, doc: dict) -> dict | None:
                   and ("proceeds" in ev["field"] or ev["field"] == "total")
                   and isinstance(ev["value"], (int, float)))
     lots = lot_fields(ctx.packet, doc["id"])
-    lot_total = sum(f["proceeds"]["value"] for f in lots.values()
-                    if "proceeds" in f and isinstance(f["proceeds"]["value"], (int, float)))
+    # Lots a person added from a page the pipeline never read count too: they are on the return now.
+    added = [line for line in ctx.state.added_lines.values() if line.get("document") == doc["id"]]
+    lot_total = round(sum(f["proceeds"]["value"] for f in lots.values()
+                          if "proceeds" in f and isinstance(f["proceeds"]["value"], (int, float)))
+                      + sum(line["proceeds"] for line in added), 2)
     if not summary or not lots:
         return None
     gap = round(summary - lot_total, 2)
+    count = len(lots) + len(added)
     if gap == 0:
-        ctx.reconciliations.append({"check": "R06", "document": doc["id"], "status": "ties",
-                                    "summary_proceeds": summary, "lot_proceeds": lot_total, "lots": len(lots)})
-    return {"summary": summary, "lots_total": lot_total, "lots": len(lots), "gap": gap}
+        ctx.reconciliations.append({"check": "R06", "document": doc["id"], "status": "ties", "summary_proceeds": summary,
+                                    "lot_proceeds": lot_total, "lots": count, "added_lots": len(added)})
+    return {"summary": summary, "lots_total": lot_total, "lots": count, "gap": gap}
 
 
 def _not_extracted(ctx: Context, d: dict) -> Finding:
@@ -108,7 +112,12 @@ def _unread_page(ctx: Context, d: dict, page: dict, superseded: bool, gap: dict 
         ca_cat = ctx.ca_effect_category_for_sale(lot["sold"])
         effect = estimate(ctx.rates, federal=[(gain_category(box), gain)],
                           california=[(ca_cat, gain)] if ca_cat else [])
-        changes.append(Change(key, None, gain, page_ref, effect))
+        # The line Form 8949 lacks, described the way the engine describes a lot, so an adjustment can add it.
+        adds = {"form": "F8949", "line": f"{box}.{lot['lot']}", "jurisdiction": "federal", "rule": "added by adjustment",
+                "label": (f"{lot['desc']} (acquired {lot['acquired']}, sold {lot['sold']}; "
+                          f"proceeds {proceeds:,.2f}, basis {basis:,.2f})"),
+                "sources": [page_ref], "document": d["id"], "sold": lot["sold"], "proceeds": proceeds}
+        changes.append(Change(key, None, gain, page_ref, effect, adds=adds))
         said.append(f"It prints lot {lot['lot']}: sold {lot['sold']}, proceeds {money(proceeds)}, basis {money(basis)}, "
                     f"{lot['term']}-term, which is missing from Form 8949 ({key}, gain {money(gain)}).")
         if gap and abs(gap["gap"] - proceeds) < 0.01:
@@ -118,6 +127,8 @@ def _unread_page(ctx: Context, d: dict, page: dict, superseded: bool, gap: dict 
     elif amounts_in(text):
         said.append(f"The page prints amounts the return does not use: {', '.join(money(a) for a in sorted(amounts_in(text)))}.")
     disp = ctx.state.dispositions.get(d["id"])
+    if superseded:   # the corrected copy carries the same page; this one proposes nothing and points at no line
+        changes = []
     finding = Finding(
         code="PAGE_NOT_READ", subject=f"{d['id']}#page{page['page']}", rule="R06", kind=OPEN_ITEM,
         title="Page never read",
@@ -126,13 +137,19 @@ def _unread_page(ctx: Context, d: dict, page: dict, superseded: bool, gap: dict 
         targets=[page_ref] + [f"line:{c.line}" for c in changes],
         evidence=[page_ref],
         severity="info" if superseded else "error",
-        changes=[] if superseded else changes,
+        changes=changes,
         quotes=quote(d["id"], page["page"], lot.group(0)) if lot else [],
         details={"explains_gap": explains_gap, "superseded": superseded},
         answer={"document": d["id"], "disposition": "partial", "pages": [page["page"]]},
     )
-    if disp and disp.disposition == "partial" and page["page"] in disp.detail.get("pages", []):
+    named = disp and disp.disposition == "partial" and page["page"] in disp.detail.get("pages", [])
+    if named and not finding.changes:
         finding.status, finding.addressed_by = "addressed", disp.event_id
+    elif named:
+        # The partial disposition says someone looked at the page. The lot it prints is a different fact:
+        # its dollars stay in the total until an adjustment adds the line or a judgment accepts leaving it off.
+        finding.details["page_dispositioned_by"] = disp.event_id
+        finding.answer = None
     return finding
 
 

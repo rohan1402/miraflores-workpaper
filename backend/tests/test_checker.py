@@ -328,3 +328,49 @@ def test_superseded_disposition_naming_the_corrected_form_addresses_it(packet):
     events = log(ev("disposition", ["D30"], payload={"disposition": "superseded", "by": "D31"}, reason="corrected 1099"))
     f = run_checker(packet, project(packet, events)).by_id("SUPERSEDED_DOCUMENT:D30")
     assert (f.status, f.addressed_by) == ("addressed", 1)
+
+
+# ---- an unread page that proposes a line: the disposition names the page, the dollars stay ----
+
+M18 = "PAGE_NOT_READ:D31#page32"
+
+
+def _partial(doc, pages):
+    return ev("disposition", [doc], payload={"disposition": "partial", "pages": pages}, reason="page read by hand")
+
+
+def _add_m18(packet):
+    from workpaper.project import adjustment_payload
+    adds = run_checker(packet, project(packet, [])).proposed_line("F8949.B.M18")
+    return ev("adjust", ["line:F8949.B.M18"], reason="lot M18 printed on page 32",
+              payload={**adjustment_payload(project(packet, []), "F8949.B.M18", -60.0, M18, adds=adds)})
+
+
+def test_a_partial_disposition_does_not_clear_the_lot_the_page_prints(packet, result):
+    after = run_checker(packet, project(packet, log(_partial("D31", [32]))))
+    f = after.by_id(M18)
+    assert f.status == "open" and f.details["page_dispositioned_by"] == 1 and f.answer is None
+    assert after.net_effect == result.net_effect                 # the $21 still counts
+
+
+def test_a_partial_disposition_clears_a_page_that_proposes_no_figure(packet):
+    f = run_checker(packet, project(packet, log(_partial("D30", [32])))).by_id("PAGE_NOT_READ:D30#page32")
+    assert (f.status, f.addressed_by) == ("addressed", 1)
+
+
+def test_adding_the_lot_answers_the_finding_and_the_account_ties(packet, result):
+    after = run_checker(packet, project(packet, log(_partial("D31", [32]), _add_m18(packet))))
+    assert (after.by_id(M18).status, after.by_id(M18).addressed_by) == ("addressed", 2)
+    assert after.net_effect["federal"] == result.net_effect["federal"] + 21
+    tie = next(r for r in after.reconciliations if r.get("document") == "D31")
+    assert (tie["status"], tie["lots"], tie["added_lots"], tie["lot_proceeds"]) == ("ties", 18, 1, 71965.0)
+    assert {f.id for f in after.findings} == {f.id for f in result.findings}   # nothing new appears
+
+
+def test_the_stored_effect_of_a_sale_fix_is_the_effect_its_card_shows(packet, result):
+    from workpaper.project import adjustment_payload
+    state = project(packet, [])
+    for f in (result.by_id("SUPPLEMENT_BASIS_UNUSED:D11"), result.by_id(M18)):
+        for c in f.changes:
+            stored = adjustment_payload(state, c.line, c.proposed, f.id, adds=c.adds)["effect"]
+            assert (stored["federal"], stored["california"]) == (c.effect.federal, c.effect.california), c.line

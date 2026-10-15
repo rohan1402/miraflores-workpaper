@@ -16,7 +16,7 @@ from functools import lru_cache
 
 from ..packet import Packet, page_ref
 from ..project import State
-from ..taxeffect import Effect
+from ..taxeffect import Effect, california_category_for_sale
 
 # Machine states (D2). The machine never says "verified".
 DISAGREEMENT = "disagreement"   # the value does not match its printed page
@@ -44,6 +44,7 @@ class Change:
     effect: Effect | None = None
     counted_in: str | None = None        # set when another finding already counts these same dollars
     counted_in_title: str | None = None  # that finding's title, for people to read
+    adds: dict | None = None             # a line the return lacks: what a person's adjustment would add
 
     @property
     def delta(self) -> float:
@@ -52,7 +53,7 @@ class Change:
     def as_dict(self) -> dict:
         return {"line": self.line, "from": self.original, "to": self.proposed, "component": self.component,
                 "effect": self.effect.as_dict() if self.effect else None, "counted_in": self.counted_in,
-                "counted_in_title": self.counted_in_title}
+                "counted_in_title": self.counted_in_title, "adds": self.adds}
 
 
 @dataclass
@@ -141,12 +142,7 @@ class Context:
         return None
 
     def ca_effect_category_for_sale(self, sold: str) -> str | None:
-        """README: a sale during California residency is fully California-source (ca_source_income).
-        A sale after the move is not California income at all for a part-year resident."""
-        window = self.ca_residency()
-        if window and window[0] <= sold <= window[1]:
-            return "ca_source_income"
-        return None
+        return california_category_for_sale(self.packet.raw["household"]["residency"], sold)
 
 
 # ---- reading printed pages -------------------------------------------------------

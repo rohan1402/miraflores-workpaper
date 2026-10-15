@@ -7,8 +7,8 @@ import { figure, money } from "../format.js";
 export default function FindingCard({ finding, tip }) {
   const f = finding;
   const can = useCan();
-  // The fix the finding proposes, when it is a new figure for a line that exists.
-  const fix = f.changes.find((c) => c.from !== null && typeof c.to === "number" && !c.counted_in);
+  // The fix the card offers comes from the server: a new figure for a line, or a line to add (a missing lot).
+  const fix = f.fix;
   const open = f.status === "open" && tip !== undefined;
   return (
     <article className={`finding sev-${f.severity} status-${f.status}`}>
@@ -75,6 +75,13 @@ export default function FindingCard({ finding, tip }) {
           ({s.line}). Not added again.
         </div>
       ))}
+      {f.details.page_dispositioned_by && (
+        // The page is named; the line it prints is not on the return yet, so its dollars still count.
+        <div className="small">
+          Page recorded as partial (event {f.details.page_dispositioned_by}). The line it prints is still missing from
+          the return: add it with an adjustment, or accept leaving it off.
+        </div>
+      )}
       {f.details.disposition_names && (
         // D19: a disposition answers the finding only when it names the document the checker named.
         <div className="small warn">
@@ -92,7 +99,8 @@ export default function FindingCard({ finding, tip }) {
             },
             {
               key: "fix", label: "Fix with an adjustment", primary: true, allowed: Boolean(fix) && can("adjust"),
-              render: (done) => <AdjustForm line={fix.line} current={fix.from} suggested={fix.to} finding={f.id} tip={tip} onDone={done} />,
+              render: (done) => <AdjustForm line={fix.line} current={fix.from} suggested={fix.to} adds={fix.adds} finding={f.id}
+                                            tip={tip} onDone={done} />,
             },
             {
               key: "accept", label: "Accept as is", allowed: can("judgment_call"),

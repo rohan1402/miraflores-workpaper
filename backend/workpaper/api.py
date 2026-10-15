@@ -245,10 +245,11 @@ def create_app(packet_path: Path | str = PACKET_PATH, db_path: Path | str | None
     @app.get("/api/estimate")
     def estimate_change(line: str, to: float, person: dict = Depends(workpaper_reader)):
         """Preview an adjustment's estimated tax effect before saving it. Nothing is written."""
-        state, _ = snapshots.get()
-        if line not in state.lines:
+        state, result = snapshots.get()
+        adds = None if line in state.lines else result.proposed_line(line)
+        if line not in state.lines and adds is None:
             raise HTTPException(404, f"No line {line} on {state.version_id}.")
-        return views.estimate_preview(state, line, to)
+        return views.estimate_preview(state, line, to, adds)
 
     @app.get("/api/checker/summary")
     def checker_summary(person: dict = Depends(workpaper_reader)):

@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from .areas import CALIFORNIA, RETURN, SIGNED_SCOPES, lines_in_area
 from .events import Event
 from .packet import Packet
-from .taxeffect import Effect, category_for_line, direction_for_line, estimate
+from .taxeffect import Effect, california_category_for_sale, category_for_line, direction_for_line, estimate
 
 DISPOSITIONS = {"used", "duplicate", "superseded", "not_extracted", "partial"}
 PARTNER_THRESHOLD = 1000  # firm rule: adjustments with a tax effect over 1,000 need the partner
@@ -125,6 +125,8 @@ class State:
     partner_approvals: dict[int, Act] = field(default_factory=dict)     # adjustment event id -> approval
     records: list[Record] = field(default_factory=list)
     standards: dict = field(default_factory=dict)
+    added_lines: dict[str, dict] = field(default_factory=dict)  # lines a person added with an adjustment
+    _merged_lines: dict | None = field(default=None, repr=False)
 
     # ---- lines ---------------------------------------------------------------
 
@@ -134,7 +136,15 @@ class State:
 
     @property
     def lines(self) -> dict[str, dict]:
-        return self.packet.lines[self.version_id]
+        """The version's lines, plus any line a person added (a lot the engine never read). If the
+        version itself has the line, the version's wins and the person's addition goes stale."""
+        version_lines = self.packet.lines[self.version_id]
+        if not self.added_lines:
+            return version_lines
+        if self._merged_lines is None:
+            self._merged_lines = {**version_lines,
+                                  **{k: v for k, v in self.added_lines.items() if k not in version_lines}}
+        return self._merged_lines
 
     def original_value(self, key: str):
         line = self.lines.get(key)
@@ -238,6 +248,9 @@ def _apply_accept_document(state: State, e: Event) -> None:
 def _apply_adjust(state: State, e: Event) -> None:
     for target in e.targets:
         key = target[len("line:"):]
+        if e.payload.get("adds"):   # the line did not exist: the engine's value is nothing, the person's is `to`
+            state.added_lines[key] = {**e.payload["adds"], "key": key, "value": None, "inputs": [], "added_by": e.id}
+            state._merged_lines = None
         state.adjustments.setdefault(key, []).append(Adjustment(
             **_act(e), line=key, original=e.payload["from"], value=e.payload["to"],
             version=e.payload.get("version", state.version_id), effect=e.payload.get("effect"),
@@ -314,26 +327,30 @@ APPLY = {
 
 # ---- adjustments: what to store when a person adjusts --------------------------
 
-def adjustment_payload(state: State, key: str, to, finding: str | None = None) -> dict:
+def adjustment_payload(state: State, key: str, to, finding: str | None = None, adds: dict | None = None) -> dict:
     """The payload an adjust event stores: from = the figure on screen, to, the version, and the
-    estimated tax effect at this version's rates. The stored effect is what the partner signs."""
+    estimated tax effect at this version's rates. The stored effect is what the partner signs.
+    `adds` describes a line the return does not have yet (from the finding that proposes it): from is None."""
     original = state.line_value(key)
-    effect = estimate_adjustment(state, key, original, to)
+    effect = estimate_adjustment(state, key, original, to, line=adds)
     payload = {"from": original, "to": to, "version": state.version_id,
                "effect": {**effect.as_dict(), "rates_version": state.version_id} if effect else None}
     if finding:
         payload["finding"] = finding
+    if adds:
+        payload["adds"] = adds
     return payload
 
 
-def estimate_adjustment(state: State, key: str, original, value) -> Effect | None:
+def estimate_adjustment(state: State, key: str, original, value, line: dict | None = None) -> Effect | None:
     """Estimated tax effect of changing a line, from the current version's per-dollar rates."""
+    original = 0 if original is None else original   # a line being added starts from nothing
     if not isinstance(value, (int, float)) or not isinstance(original, (int, float)):
         return None
     direction = direction_for_line(key)
     if direction is None:
         return None
-    line = state.lines.get(key, {})
+    line = line if line is not None else state.lines.get(key, {})
     delta = (value - original) * direction  # an expense that falls raises the income the rate measures
     rates = state.version["tax_effect_rates"]
     if line.get("jurisdiction") == "california":
@@ -347,8 +364,22 @@ def estimate_adjustment(state: State, key: str, original, value) -> Effect | Non
         return None
     if category == "payment":
         return estimate(rates, federal=[(category, delta)])  # a federal payment has no California effect
+    sold = _sale_date(state.packet, key, line)
+    if sold:
+        # A sale of securities: California-source if sold while a California resident, else no California
+        # effect at all (README). The checker uses the same rule, so a fix stores the effect its card showed.
+        ca = california_category_for_sale(state.packet.raw["household"]["residency"], sold)
+        return estimate(rates, federal=[(category, delta)], california=[(ca, delta)] if ca else [])
     # A federal income or deduction change flows into California AGI at the same category's rate.
     return estimate(rates, federal=[(category, delta)], california=[(category, delta)])
+
+
+def _sale_date(packet: Packet, key: str, line: dict) -> str | None:
+    """The date a Form 8949 lot was sold: its '_sold' source value, or the date an added lot carries."""
+    if not key.startswith("F8949."):
+        return None
+    return line.get("sold") or next((packet.values[s]["value"] for s in line.get("sources", [])
+                                     if s in packet.values and packet.values[s]["field"].endswith("_sold")), None)
 
 
 def effect_view(state: State, adj: Adjustment) -> dict:

@@ -148,6 +148,8 @@ def _broker_of(packet: Packet, line: dict) -> str | None:
     """The document that printed a lot's proceeds: the brokerage account the lot belongs to."""
     if not line["key"].startswith("F8949."):
         return None
+    if line.get("added_by"):   # a lot a person added from a page the pipeline never read
+        return line["document"]
     return next((packet.values[s]["document_id"] for s in line["sources"]
                  if s in packet.values and packet.values[s]["field"].endswith("_proceeds")), None)
 
@@ -195,6 +197,7 @@ def line_row(packet: Packet, state: State, result: CheckResult, key: str, by_lin
         "human_state": _human_state(state, key, adjustments),
         "findings": [f.id for f in findings],
         "sources": len(line["sources"]),
+        "added_by": line.get("added_by"),
     }
 
 
@@ -234,7 +237,9 @@ def line_trace(packet: Packet, state: State, result: CheckResult, key: str) -> d
         "meta": meta(state),
         "line": line_row(packet, state, result, key, by_line),
         "scopes": sorted(scopes_of_line(key, line)),   # its area, and California if it rests on California evidence
-        "rule": {"id": line["rule"], "description": engine_rules.get(line["rule"])},
+        "rule": {"id": line["rule"], "description": (
+            f"Not on the engine's return. Added by an adjustment (event {line['added_by']}) from a page the "
+            f"pipeline never read." if line.get("added_by") else engine_rules.get(line["rule"]))},
         "note": line.get("note"),
         "inputs": [line_row(packet, state, result, k, by_line) for k in line["inputs"] if k in state.lines],
         "used_by": sorted(k for k, other in state.lines.items() if key in other["inputs"]),
@@ -456,17 +461,23 @@ def release_preview(state: State) -> dict:
 
 
 def finding_view(f) -> dict:
-    """A finding as the browser sees it, plus whether accepting it as is would reach the partner
-    (D20: its estimated effect is over the firm threshold). The browser does not test the threshold."""
+    """A finding as the browser sees it, plus two answers the browser does not work out itself:
+    the fix the card offers (a new figure for a line on the return, or a line the finding says to add),
+    and whether accepting it as is would reach the partner (D20: effect over the firm threshold)."""
     effect = f.effect
-    return {**f.as_dict(), "partner_if_accepted": bool(effect) and (
-        abs(effect.federal) > PARTNER_THRESHOLD or abs(effect.california) > PARTNER_THRESHOLD)}
+    fix = next((c for c in f.changes if isinstance(c.proposed, (int, float)) and c.counted_in is None
+                and (c.original is not None or c.adds)), None)
+    return {**f.as_dict(),
+            "fix": {"line": fix.line, "from": fix.original, "to": fix.proposed,
+                    "adds": fix.adds["label"] if fix.adds else None} if fix else None,
+            "partner_if_accepted": bool(effect) and (
+                abs(effect.federal) > PARTNER_THRESHOLD or abs(effect.california) > PARTNER_THRESHOLD)}
 
 
-def estimate_preview(state: State, key: str, to: float) -> dict:
-    """The estimated effect an adjustment would store, before anyone saves it."""
+def estimate_preview(state: State, key: str, to: float, adds: dict | None = None) -> dict:
+    """The estimated effect an adjustment would store, before anyone saves it (`adds`: a line to add)."""
     original = state.line_value(key)
-    effect = estimate_adjustment(state, key, original, to)
+    effect = estimate_adjustment(state, key, original, to, line=adds)
     eff = effect.as_dict() if effect else None
     return {"line": key, "from": original, "to": to, "version": state.version_id, "effect": eff,
             "needs_partner": bool(eff) and (abs(eff["federal"]) > PARTNER_THRESHOLD

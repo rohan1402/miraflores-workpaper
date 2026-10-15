@@ -49,6 +49,12 @@ class CheckResult:
     def by_id(self, finding_id: str) -> Finding | None:
         return next((f for f in self.findings if f.id == finding_id), None)
 
+    def proposed_line(self, key: str) -> dict | None:
+        """A line the return lacks that an open finding proposes adding (a lot on an unread page):
+        the only way a person may add a line."""
+        return next((c.adds for f in self.findings if f.status == "open" for c in f.changes
+                     if c.line == key and c.adds), None)
+
     def as_dict(self) -> dict:
         return {
             "findings": [f.as_dict() for f in self.findings],

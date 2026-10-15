@@ -324,3 +324,20 @@ def test_the_partner_release_covers_a_large_acceptance_and_reopens_if_it_is_undo
     after = project(packet, log(accept, release, undo))
     status = signoff_status(after, after.partner_release)
     assert status["status"] == "reopened" and status["causes"] == {"event:3": [f"accepted.{c6}"]}
+
+
+def test_an_added_line_joins_its_area_and_reopens_the_sign_off_and_an_undo_removes_it(packet):
+    from workpaper.checker import run_checker
+    from workpaper.project import adjustment_payload, signoff_payload, signoff_status
+    adds = run_checker(packet, project(packet, [])).proposed_line("F8949.B.M18")
+    sign = ev("sign_off", ["area:investments_and_digital_assets"],
+              payload=signoff_payload(project(packet, []), "investments_and_digital_assets", "preparer"))
+    add = ev("adjust", ["line:F8949.B.M18"], reason="lot M18",
+             payload=adjustment_payload(project(packet, []), "F8949.B.M18", -60.0, "PAGE_NOT_READ:D31#page32", adds=adds))
+    state = project(packet, log(sign, add))
+    assert state.line_value("F8949.B.M18") == -60.0 and state.original_value("F8949.B.M18") is None
+    assert "F8949.B.M18" in signoff_payload(state, "investments_and_digital_assets", "preparer")["covered"]
+    status = signoff_status(state, state.signoffs["investments_and_digital_assets"]["preparer"])
+    assert status["status"] == "reopened" and status["causes"] == {"event:2": ["F8949.B.M18"]}
+    undone = project(packet, log(sign, add, ev("undo", ["event:2"])))
+    assert "F8949.B.M18" not in undone.lines

@@ -48,7 +48,9 @@ export default function Line({ lineKey, names, refreshKey }) {
             <span className="muted small">2025</span>
             <span className="num huge">{figure(line.value, line.key)}</span>
             {line.human_state?.state === "adjusted" && (
-              <span className="small muted">engine {figure(line.engine_value, line.key)}</span>
+              <span className="small muted">
+                {line.added_by ? "added: not on the engine's return" : `engine ${figure(line.engine_value, line.key)}`}
+              </span>
             )}
           </div>
           <div>
