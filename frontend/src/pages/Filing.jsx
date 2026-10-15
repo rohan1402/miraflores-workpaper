@@ -159,7 +159,7 @@ function Transmission({ t, names }) {
       <AgencyLine label="California" answer={california} />
       {Object.entries(t.settlement).map(([j, s]) => (
         <div key={j} className="small settlement">
-          {JURISDICTIONS[j]}: {s.kind === "refund" ? `refund of ${money(s.amount)}` : `payment of ${money(s.amount)} on ${date(`${s.on}T12:00:00Z`)}`}
+          {JURISDICTIONS[j]}: {s.kind === "refund" ? "refund" : "payment"} of {money(s.amount)} on {date(`${s.on}T12:00:00Z`)}
           {s.kind === "payment" && (s.interest > 0 || s.penalty > 0) && (
             <> plus about {money(s.interest)} interest and {money(s.penalty)} late-payment penalty <Estimate /></>
           )}

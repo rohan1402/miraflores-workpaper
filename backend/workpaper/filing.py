@@ -8,8 +8,9 @@ The agency is simulated from tax_agency_records.efile, which holds the only answ
 - a transmitted SSN that is not the number the agency holds for that person: the packet's federal
   rejection (R0000-504-02), and California held, not transmitted;
 - otherwise the packet's federal acceptance, and California transmitted after it and accepted.
-The agency reads the digits on the return, never the checker's status. An amended return has no
-answer in the packet, so it is recorded as filed.
+The agency reads the digits on the return, never the checker's status. An amended return goes
+through the same check: a wrong number gets the packet's rejection and California is held; a right
+one is recorded as filed, since the packet holds no acceptance for an amendment.
 """
 
 from __future__ import annotations
@@ -66,17 +67,18 @@ def agency_ssns(packet: Packet) -> dict[str, str]:
 
 
 def agency_answer(packet: Packet, presented: dict, kind: str) -> dict:
-    """The agency's answer to one transmission, taken from tax_agency_records.efile."""
-    if kind == "amended":
-        note = "The packet holds no agency answer for an amended return; recorded as filed."
-        return {"federal": {"status": "filed", "note": note}, "california": {"status": "filed", "note": note},
-                "wrong_tins": []}
+    """The agency's answer to one transmission, taken from tax_agency_records.efile. The TIN check
+    comes first, for an original and an amendment alike."""
     held = agency_ssns(packet)
     wrong = sorted(pid for pid, ssn in presented["identity"].items() if held.get(pid) and held[pid] != ssn)
     efile = packet.raw["tax_agency_records"]["efile"]
     if wrong:
         return {"federal": _packet_answer(efile, "federal", "rejected"),
                 "california": _packet_answer(efile, "california", "not_transmitted"), "wrong_tins": wrong}
+    if kind == "amended":
+        note = "The packet holds no agency acceptance for an amended return; recorded as filed."
+        return {"federal": {"status": "filed", "note": note}, "california": {"status": "filed", "note": note},
+                "wrong_tins": []}
     return {"federal": _packet_answer(efile, "federal", "accepted"),
             "california": _packet_answer(efile, "california", "accepted"), "wrong_tins": []}
 
@@ -180,8 +182,9 @@ def _form_8879(state: State, current_fp: str, round_start: int) -> dict:
 
 def settlement(packet: Packet, filed: Transmission, previous: Transmission | None = None) -> dict:
     """What the accepted return leaves to pay or to refund, per jurisdiction (D23). The balance is
-    the estimated balance of the return that was transmitted; a payment after the original due
-    date carries interest and a late-payment penalty, estimated from post_filing_rates.
+    the estimated balance of the return that was transmitted, dated the day it was transmitted (the
+    acceptance; the script's July 20 stays off the calendar). A payment after the original due date
+    carries interest and a late-payment penalty, estimated from post_filing_rates.
     For an amendment, the difference from the return filed before it."""
     out = {}
     for j in JURISDICTIONS:
@@ -193,8 +196,8 @@ def settlement(packet: Packet, filed: Transmission, previous: Transmission | Non
         if balance > 0:
             out[j] = {"kind": "payment", "amount": balance, "on": filed.at[:10],
                       **_late_charges(packet, j, balance, filed.at[:10])}
-        elif balance < 0:
-            out[j] = {"kind": "refund", "amount": -balance}
+        elif balance < 0:   # a refund is dated the same way, and carries no interest or penalty
+            out[j] = {"kind": "refund", "amount": -balance, "on": filed.at[:10]}
     return out
 
 

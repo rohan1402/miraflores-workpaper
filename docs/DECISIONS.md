@@ -245,9 +245,9 @@ Lines can be selected in an area and verified in one act; accepting a document v
 
 Every read takes `?as_of=YYYY-MM-DD`, meaning the end of that day: the version, documents, agency records and people's acts as they stood then. The screen says it is replaying and offers no acts; writes take no `as_of` and always act on the current log. Unmask stays available during replay, and the view is logged as of today. The timeline interleaves the packet's scripted season with people's acts; any entry can be replayed to.
 
-## Step 5 build decisions (2026-10-15; Rohan's answers LOCKED, implementation OPEN until he reviews)
+## Step 5 build decisions (LOCKED 2026-10-15, after Rohan's review)
 
-Filing and firm. Rohan answered four questions before the build; those answers are recorded here as his and are LOCKED. How they are built is OPEN until his review.
+Filing and firm. Rohan answered four questions before the build (D23 to D26), then reviewed how they were built: D27 locked after the amendment TIN check was added, D28 and D29 locked as built.
 
 ### D23. Acts drive filing; the packet supplies only the agency's answers: LOCKED (Rohan)
 
@@ -268,9 +268,9 @@ After filing, the return is frozen. An "open amendment" act with a reason lifts 
 
 ### D26. Roll forward and 2026 planning come right after step 5: LOCKED (Rohan)
 
-Step 5 is the CLAUDE.md list plus what filing needs (client approval, the client's copy). Carrying everything forward with its history and planning 2026 (estimates from planning_reference_2026, the Form 8801 credit, carryovers) is its own step before deploy and the write-ups.
+Step 5 is the CLAUDE.md list plus what filing needs (client approval, the client's copy). The roll-forward step is the carryovers and the 2026 estimates (from planning_reference_2026, with the Form 8801 credit), before deploy and the write-ups. The firm's twelve required steps are not part of it.
 
-### D27. How filing is built: OPEN
+### D27. How filing is built: LOCKED (with the amendment TIN check)
 
 Code: `backend/workpaper/filing.py`, `identity.py`; screens `pages/Filing.jsx`, `pages/YourReturn.jsx`.
 
@@ -279,10 +279,11 @@ Code: `backend/workpaper/filing.py`, `identity.py`; screens `pages/Filing.jsx`, 
 - **Transmit** stores what was sent. The agency's answer is never stored: it is worked out on every read from the packet's `efile` records, so it cannot drift from them. The number the agency holds for a person is what the packet's documents print for them, at any date.
 - **Correcting an SSN** names a document that prints it (`correct_identity {"person", "document"}`); the log never holds digits. R12 then reads the number on the return and marks the finding addressed. A rejected transmission is R12's evidence (`event:N`), replacing the dated packet entry.
 - **The freeze** is derived: a return is frozen when it was filed (original accepted, or amendment filed) and no amendment opened after. While frozen, every guarded act and judgment calls are refused; notes, questions, answers, evidence, time and the notice response still append. A transmission and a released notice response cannot be undone (they left the firm); a client's signature is replaced only by signing again.
-- **After acceptance**: the balance of the accepted return is paid, or refunded, dated at acceptance. A payment after April 15 shows interest and the late-payment penalty estimated from `post_filing_rates` (federal 7% a year and 0.5% a month; California 7% and 5% plus 0.5% a month), with the workings. Open for Rohan: dating the payment at acceptance (the July 20 date is the script's, which D23 took off the calendar).
-- **Amendment round**: the partner must release again after the amendment opened; area sign-offs reopen only where their covered values changed (the existing fingerprint rule). The amended return has no agency answer in the packet, so it is recorded as filed. The filing screen shows filed vs now per jurisdiction, and the amendment's settlement is the difference.
+- **After acceptance**: the balance of the accepted return is paid, or refunded, dated the day it was transmitted (that is the acceptance; July 20 stays off the calendar). A payment after April 15 shows interest and the late-payment penalty estimated from `post_filing_rates` (federal 7% a year and 0.5% a month; California 7% and 5% plus 0.5% a month), with the workings. A refund gets the same date and no interest or penalty.
+- **Amendment round**: the partner must release again after the amendment opened; area sign-offs reopen only where their covered values changed (the existing fingerprint rule), and gate the release, which gates the transmit. The filing screen shows filed vs now per jurisdiction.
+- **Changed: an amendment goes through the same TIN check as the original.** A wrong number gets the packet's rejection and California is held; the amendment stays open, not filed. A right number is recorded as filed (the packet holds no acceptance for an amendment), and its settlement is the difference from the return filed before it. Before the change, undoing Theo's correction and transmitting the amendment would have filed the organizer's number.
 
-### D28. How the notice response and the examiner are built: OPEN
+### D28. How the notice response and the examiner are built: LOCKED
 
 Code: `backend/workpaper/notices.py`, `views_filing.py`; screens `pages/Notice.jsx`, `pages/Examiner.jsx`.
 
@@ -290,7 +291,7 @@ Code: `backend/workpaper/notices.py`, `views_filing.py`; screens `pages/Notice.j
 - The release stores the whole package, resolved against the return as filed (projected to the accepting transmission): figures as filed, adjustments with reasons, sources down to the page field, verifications, client words, attachments by hash. The examiner reads exactly that, even after an amendment. A release is refused while an item has no answer, and gets a 409 if a draft changed after the partner looked.
 - The examiner's only routes are `/api/examiner` and `/api/examiner/export` (one HTML file, no scripts, masked). Every workpaper route answers 403.
 
-### D29. Firm: time, standards, search, view log: OPEN
+### D29. Firm: time, standards, search, view log: LOCKED
 
 Code: `backend/workpaper/views_firm.py`; screen `pages/Firm.jsx`, `pages/Search.jsx`.
 
@@ -298,7 +299,7 @@ Code: `backend/workpaper/views_firm.py`; screen `pages/Firm.jsx`, `pages/Search.
 - **Standards**: the administrator changes a number or a list with a reason; the value keeps its type. Each change is an event, so the checker uses the new value from then on and replay shows the old one. Jo's home is the firm page; the return is one click away.
 - **Search** covers lines, documents, read values, findings, client words and people's notes. It matches on masked text for everyone, so it cannot be used to test whether a hidden number is in the file.
 - **View log**: the existing log of unmasked views and file opens, now on the firm page for the partner and the administrator.
-- Not built in step 5: a derived checklist of the firm's required steps (status is the filing stage and the deadlines). Proposed for the roll-forward step.
+- Status is the filing stage and the deadlines. The firm's twelve required steps are not built as a checklist, and not in the roll-forward step either (D26).
 
 ## Build plan
 

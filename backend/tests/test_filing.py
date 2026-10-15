@@ -166,17 +166,19 @@ def test_the_filed_return_is_frozen_but_notes_still_append(client):
 
 
 def test_the_payment_or_refund_uses_the_balance_of_the_accepted_return(packet):
+    # Dated the day it was transmitted (the acceptance). July 20 here is only a clock for the arithmetic:
+    # 96 days of interest, 4 months of late-payment penalty.
     owed = Transmission(1, "2026-07-20T00:00:00Z", PRIYA, "original",
                         {"estimated_balance_due": {"federal": 4220, "california": -8256}}, "x",
                         {"federal": {"status": "accepted"}, "california": {"status": "accepted"}})
     out = settlement(packet, owed)
-    assert out["california"] == {"kind": "refund", "amount": 8256}
+    assert out["california"] == {"kind": "refund", "amount": 8256, "on": "2026-07-20"}   # no interest or penalty
     assert (out["federal"]["kind"], out["federal"]["amount"], out["federal"]["penalty"]) == ("payment", 4220, 84)  # 4 months
     assert out["federal"]["interest"] == round(4220 * 0.07 * 96 / 365)
     corrected = Transmission(1, "2026-07-20T00:00:00Z", PRIYA, "original",
                              {"estimated_balance_due": {"federal": -4533, "california": -11573}}, "x",
                              {"federal": {"status": "accepted"}, "california": {"status": "accepted"}})
-    assert settlement(packet, corrected)["federal"] == {"kind": "refund", "amount": 4533}   # the July 20 payment does not play
+    assert settlement(packet, corrected)["federal"] == {"kind": "refund", "amount": 4533, "on": "2026-07-20"}  # no payment plays
 
 
 def test_the_scripted_agency_answers_are_not_on_the_calendar_and_the_notice_waits_for_an_acceptance(client):
@@ -217,6 +219,26 @@ def test_an_amendment_is_a_full_second_round(client):
     assert last["kind"] == "amended" and last["answer"]["federal"]["status"] == "filed"
     assert last["settlement"]["federal"]["amount"] == 1000   # what the amendment adds, not the whole balance
     assert status["frozen"] is True and status["stage"] == "amended return filed"
+
+
+def test_an_amendment_goes_through_the_same_tin_check(client):
+    accepted(client)
+    ok(act(client, HELEN, "open_amendment", ["return"], reason="Reconsider the dependents"))
+    correction = next(e for e in client.get("/api/events", headers=as_(HELEN)).json() if e["action"] == "correct_identity")
+    ok(act(client, DANIEL, "undo", [f"event:{correction['id']}"], reason="back to the organizer's number"))
+    released(client)
+    both_sign(client)
+    ok(act(client, PRIYA, "transmit", ["return"]))
+    status = filing(client)
+    last = status["transmissions"][-1]
+    assert last["kind"] == "amended" and last["answer"]["federal"]["errors"][0]["code"] == "R0000-504-02"
+    assert last["answer"]["california"]["status"] == "not_transmitted" and last["settlement"] == {}
+    assert status["amendment_open"] is True and status["frozen"] is False   # a rejected amendment is not filed
+    ok(act(client, PRIYA, "correct_identity", ["household:theo"], {"document": "D06"}, reason="last year's return"))
+    both_sign(client)
+    ok(act(client, PRIYA, "transmit", ["return"]))
+    last = filing(client)["transmissions"][-1]
+    assert last["answer"]["federal"]["status"] == "filed" and last["settlement"] == {}   # nothing changed: no difference
 
 
 # ---- the notice and the examiner (D24) ---------------------------------------------------
