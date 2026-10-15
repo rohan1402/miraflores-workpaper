@@ -75,9 +75,13 @@ def _duplicate(ctx: Context, original: dict, copy: dict, diffs: list) -> Finding
         evidence=[original["id"], f"doc:{copy['id']}#page1"],
         severity="error" if used_by else "warning",
         details={"duplicate_of": original["id"], "differences": diffs, "lines_using_copy": used_by},
+        answer={"document": copy["id"], "disposition": "duplicate", "of": original["id"]},
     )
-    if disp and disp.disposition == "duplicate":
+    # Only a disposition that names the same original answers the finding (D19).
+    if disp and disp.disposition == "duplicate" and disp.detail.get("of") == original["id"]:
         finding.status, finding.addressed_by = "addressed", disp.event_id
+    elif disp and disp.disposition == "duplicate":
+        finding.details["disposition_names"] = disp.detail.get("of")
     return finding
 
 
@@ -98,9 +102,13 @@ def _superseded(ctx: Context, a: dict, b: dict, diffs: list) -> Finding:
         evidence=[f"doc:{new['id']}#page1"],
         severity="error" if still_used else "warning",
         details={"superseded": old["id"], "by": new["id"], "differences": diffs, "engine_switched_in": switched},
+        answer={"document": old["id"], "disposition": "superseded", "by": new["id"]},
     )
-    if disp and disp.disposition == "superseded":
+    # Only a disposition that names the same corrected copy answers the finding (D19).
+    if disp and disp.disposition == "superseded" and disp.detail.get("by") == new["id"]:
         finding.status, finding.addressed_by = "addressed", disp.event_id
+    elif disp and disp.disposition == "superseded":
+        finding.details["disposition_names"] = disp.detail.get("by")
     return finding
 
 

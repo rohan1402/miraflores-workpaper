@@ -1,7 +1,7 @@
 // One checker finding: what is wrong, the proof, the proposed change and its estimated effect.
 import { Estimate, MachineBadge, Ref, SeverityDot } from "./common.jsx";
 import { ActionBar, useCan } from "./Act.jsx";
-import { AdjustForm, AttachForm, JudgmentForm, NoteForm, QuestionForm } from "./Forms.jsx";
+import { AdjustForm, AttachForm, DispositionForm, JudgmentForm, NoteForm, QuestionForm } from "./Forms.jsx";
 import { figure, money } from "../format.js";
 
 export default function FindingCard({ finding, tip }) {
@@ -75,16 +75,28 @@ export default function FindingCard({ finding, tip }) {
           ({s.line}). Not added again.
         </div>
       ))}
+      {f.details.disposition_names && (
+        // D19: a disposition answers the finding only when it names the document the checker named.
+        <div className="small warn">
+          The disposition on file names {f.details.disposition_names}; the checker found{" "}
+          {f.answer.of || f.answer.by}. It does not answer this finding.
+        </div>
+      )}
       {open && (
         <ActionBar
           actions={[
+            {
+              // A document finding has no figure to fix: its answer is the disposition on the document (D20).
+              key: "dispose", label: "Record the disposition", primary: true, allowed: Boolean(f.answer) && can("disposition"),
+              render: (done) => <DispositionForm doc={f.answer.document} suggestion={f.answer} tip={tip} onDone={done} />,
+            },
             {
               key: "fix", label: "Fix with an adjustment", primary: true, allowed: Boolean(fix) && can("adjust"),
               render: (done) => <AdjustForm line={fix.line} current={fix.from} suggested={fix.to} finding={f.id} tip={tip} onDone={done} />,
             },
             {
               key: "accept", label: "Accept as is", allowed: can("judgment_call"),
-              render: (done) => <JudgmentForm finding={f.id} tip={tip} onDone={done} />,
+              render: (done) => <JudgmentForm finding={f.id} effect={f.effect} toPartner={f.partner_if_accepted} tip={tip} onDone={done} />,
             },
             {
               key: "note", label: "Note", allowed: can("note"),

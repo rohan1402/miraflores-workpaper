@@ -148,6 +148,15 @@ def test_partner_release_is_refused_after_a_large_adjustment(store, packet):
     assert err.value.conflicting.id == big.id
 
 
+def test_partner_release_is_refused_after_a_large_acceptance(store):
+    accept = store.append(ev("judgment_call", ["finding:EVIDENCE_AFTER_COMPUTATION:msg-07"],
+                             payload={"decision": "keep zero basis", "authority": "Treas. Reg. 1.6001-1(a)",
+                                      "effect": {"federal": -1312, "california": -195}}))
+    with pytest.raises(StaleTip) as err:
+        store.append(_release(base_tip=0))   # Helen looked before the acceptance landed (D20)
+    assert err.value.conflicting.id == accept.id
+
+
 def test_base_tip_cannot_be_ahead_of_the_log(store):
     with pytest.raises(ValueError):
         store.append(ev("note", ["D10"], base_tip=5))

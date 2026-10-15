@@ -311,3 +311,20 @@ def test_rules_do_not_name_packet_ids():
 
 def test_every_rule_produces_findings(result):
     assert {f.rule for f in result.findings} == set(RULES)
+
+
+@pytest.mark.parametrize("disposition,payload,code", [
+    ("duplicate", {"of": "D74"}, "DUPLICATE_DOCUMENT:D10"),
+    ("superseded", {"by": "D74"}, "SUPERSEDED_DOCUMENT:D30"),
+])
+def test_disposition_naming_the_wrong_document_leaves_the_finding_open(packet, disposition, payload, code):
+    target = code.split(":")[1]
+    events = log(ev("disposition", [target], payload={"disposition": disposition, **payload}, reason="a slip"))
+    f = run_checker(packet, project(packet, events)).by_id(code)
+    assert f.status == "open" and f.details["disposition_names"] == "D74"
+
+
+def test_superseded_disposition_naming_the_corrected_form_addresses_it(packet):
+    events = log(ev("disposition", ["D30"], payload={"disposition": "superseded", "by": "D31"}, reason="corrected 1099"))
+    f = run_checker(packet, project(packet, events)).by_id("SUPERSEDED_DOCUMENT:D30")
+    assert (f.status, f.addressed_by) == ("addressed", 1)

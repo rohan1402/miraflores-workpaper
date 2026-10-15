@@ -18,8 +18,8 @@ from .concurrency import ConflictRule
 from .events import Event
 from .packet import Packet, page_ref, parse_page_ref, ref_kind
 from .project import (
-    PARTNER_THRESHOLD, State, area_status, effect_view, estimate_adjustment, large_adjustments, large_waivers,
-    release_blockers, signoff_status,
+    PARTNER_THRESHOLD, State, area_status, effect_view, estimate_adjustment, large_acceptances, large_adjustments,
+    large_waivers, release_blockers, signoff_status,
 )
 from .roles import home_config, verbs
 
@@ -247,7 +247,7 @@ def line_trace(packet: Packet, state: State, result: CheckResult, key: str) -> d
                          "partner_approved": a.event_id in state.partner_approvals}
                         for a in state.adjustments.get(key, [])],
         "verifications": [_verification(v) for v in state.verifications.get(f"line:{key}", [])],
-        "findings": [f.as_dict() for f in result.findings if f"line:{key}" in f.targets],
+        "findings": [finding_view(f) for f in result.findings if f"line:{key}" in f.targets],
     }
 
 
@@ -386,7 +386,7 @@ def document_view(packet: Packet, state: State, result: CheckResult, scopes: Con
         "not_used_because": None if landed else _why_not_used(d, state, findings),
         "reconciliation": next((r for r in result.reconciliations if r.get("document") == doc_id), None),
         "pages": pages,
-        "findings": [f.as_dict() for f in findings],
+        "findings": [finding_view(f) for f in findings],
     }
 
 
@@ -434,7 +434,7 @@ def findings_view(state: State, result: CheckResult, scopes: ConflictRule, area:
     return {
         "meta": meta(state),
         "rules": {rule: title for rule, (title, _) in RULES.items()},
-        "findings": [f.as_dict() for f in found],
+        "findings": [finding_view(f) for f in found],
         "corrected_lines": result.corrected_lines,
         "net_effect": result.net_effect,
         "reconciliations": result.reconciliations,
@@ -444,13 +444,23 @@ def findings_view(state: State, result: CheckResult, scopes: ConflictRule, area:
 # ---- workflow ---------------------------------------------------------------------
 
 def release_preview(state: State) -> dict:
-    """What a partner release would sign in the same act: large adjustments and large waived errors."""
+    """What a partner release would sign in the same act: large adjustments, large waived errors
+    and large accepted findings."""
     return {
         "adjustments": [{"event": a.event_id, "line": a.line, "from": a.original, "to": a.value, "by": a.actor,
                          "reason": a.reason, "effect": a.effect, "approved": a.event_id in state.partner_approvals}
                         for a in large_adjustments(state)],
         "waivers": large_waivers(state),
+        "acceptances": large_acceptances(state),
     }
+
+
+def finding_view(f) -> dict:
+    """A finding as the browser sees it, plus whether accepting it as is would reach the partner
+    (D20: its estimated effect is over the firm threshold). The browser does not test the threshold."""
+    effect = f.effect
+    return {**f.as_dict(), "partner_if_accepted": bool(effect) and (
+        abs(effect.federal) > PARTNER_THRESHOLD or abs(effect.california) > PARTNER_THRESHOLD)}
 
 
 def estimate_preview(state: State, key: str, to: float) -> dict:

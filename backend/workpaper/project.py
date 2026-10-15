@@ -95,6 +95,7 @@ class SignOff(Act):
     waived: tuple[dict, ...] = ()   # area sign-off: open error findings signed over, with their stored effect
     approves: tuple[int, ...] = ()  # partner release: the large adjustments it approves
     accepts: tuple[str, ...] = ()   # partner release: the large waived findings it accepts
+    acceptances: tuple[str, ...] = ()  # partner release: the large accepted findings it covers
 
 
 @dataclass
@@ -272,6 +273,7 @@ def _apply_partner_release(state: State, e: Event) -> None:
         **_act(e), area=RETURN, level="partner", version=e.payload["version"],
         covered=e.payload["covered"], fingerprint=e.payload["fingerprint"],
         waiver=e.payload.get("waiver"), approves=approves, accepts=tuple(e.payload.get("waivers", ())),
+        acceptances=tuple(e.payload.get("acceptances", ())),
     )
     for adjustment_id in approves:  # Helen signs once: the release approves the large adjustments it lists
         state.partner_approvals[adjustment_id] = Act(**_act(e))
@@ -380,14 +382,32 @@ def large_waivers(state: State) -> list[dict]:
     return [found[k] for k in sorted(found)]
 
 
+def large_acceptances(state: State) -> list[dict]:
+    """Findings accepted by a judgment call (with authority) whose stored effect is over the firm
+    threshold (D20). Accepting one leaves its dollars out of the return, so like a large adjustment
+    it must reach the partner: the release lists it. The latest judgment on a finding counts."""
+    found: dict[str, dict] = {}
+    for r in state.records:
+        if r.action != "judgment_call" or not (r.payload.get("authority") or "").strip():
+            continue
+        effect = r.payload.get("effect") or {}
+        if abs(effect.get("federal", 0)) > PARTNER_THRESHOLD or abs(effect.get("california", 0)) > PARTNER_THRESHOLD:
+            ids = [t[len("finding:"):] for t in r.targets if t.startswith("finding:")]
+            for finding_id in ids + ([r.payload["finding"]] if r.payload.get("finding") else []):
+                found[finding_id] = {"id": finding_id, "event": r.event_id, "by": r.actor,
+                                     "decision": r.payload.get("decision"), "authority": r.payload.get("authority"),
+                                     "federal": effect.get("federal", 0), "california": effect.get("california", 0)}
+    return [found[k] for k in sorted(found)]
+
+
 # ---- sign-offs: derived, never stored ------------------------------------------
 
 def covered_values(state: State, area: str) -> dict:
     """What a sign-off covers: every line in the area (or the California lens), as it currently stands.
 
     For the partner release ('return'): the bottom line of the current version plus every
-    adjustment whose stored effect is over the firm threshold. A small receipt does not
-    lift the partner release; a large adjustment does.
+    adjustment, waived error and accepted finding whose stored effect is over the firm threshold.
+    A small receipt does not lift the partner release; a large adjustment or acceptance does.
     """
     if area == RETURN:
         covered = {f"summary.{j}.{k}": v for j, totals in state.version["summary"].items() for k, v in totals.items()}
@@ -395,6 +415,9 @@ def covered_values(state: State, area: str) -> dict:
             covered[f"adjustment.{adj.event_id}"] = {"line": adj.line, "to": adj.value, "effect": adj.effect}
         for w in large_waivers(state):
             covered[f"waived.{w['id']}"] = {"area": w["area"], "federal": w["federal"], "california": w["california"]}
+        for a in large_acceptances(state):
+            covered[f"accepted.{a['id']}"] = {"decision": a["decision"], "federal": a["federal"],
+                                              "california": a["california"]}
         return covered
     covered = {key: state.line_value(key) for key in lines_in_area(state.lines, area)}
     if area == CALIFORNIA:
@@ -434,13 +457,14 @@ def signoff_payload(state: State, area: str, level: str, waiver: str | None = No
     """Build the payload a sign-off event stores: version, the covered values, their fingerprint.
 
     An area sign-off with a waiver also stores the open error findings it signs over, each with
-    its estimated effect (`waived`). A partner release lists the large adjustments it approves
-    and the large waived findings it accepts, so Helen signs both once."""
+    its estimated effect (`waived`). A partner release lists the large adjustments it approves,
+    the large waived findings and the large accepted findings, so Helen signs them all once."""
     covered = covered_values(state, area)
     payload = {"level": level, "version": state.version_id, "covered": covered, "fingerprint": fingerprint(covered)}
     if area == RETURN:
         payload["approves"] = [a.event_id for a in large_adjustments(state)]
         payload["waivers"] = [w["id"] for w in large_waivers(state)]
+        payload["acceptances"] = [a["id"] for a in large_acceptances(state)]
     if waiver:
         payload["waiver"] = waiver
         payload["waived"] = list(waived or [])
@@ -490,6 +514,11 @@ def _cause_finder(state: State, signoff: SignOff):
         if key.startswith("waived."):   # a large waived finding: the sign-off that waived it
             found = [w for w in large_waivers(state) if w["id"] == key[len("waived."):]]
             return [f"event:{found[0]['signoff_event']}"] if found else ["recomputed"]
+        if key.startswith("accepted."):  # a large accepted finding: the judgment call, or the undo of it
+            finding = f"finding:{key[len('accepted.'):]}"
+            acts = [e.id for e in state.events if e.id > signoff.event_id
+                    and finding in (*e.targets, *e.payload.get("undoes", {}).get("targets", []))]
+            return [f"event:{i}" for i in acts] or ["recomputed"]
         if key.startswith("field:"):   # a California figure changed, entered or left: the document it sits on
             return _documents_for_field(state, signoff.version, key) or ["recomputed"]
         if key.startswith(("asset:", "household.")):

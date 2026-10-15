@@ -95,7 +95,9 @@ class ConflictRule:
         log = list(seen)
         for e in newer:
             log.append(e)
-            if e.action in APPEND_ONLY and e.action not in ("review_note", "resolve_review_note"):
+            # Append-only acts never conflict themselves, but these three change what the release covers:
+            # an open review note blocks it, and a large accepted finding is listed on it (D20).
+            if e.action in APPEND_ONLY and e.action not in ("review_note", "resolve_review_note", "judgment_call"):
                 continue
             if release_view(project(self.packet, log)) != before:
                 return e

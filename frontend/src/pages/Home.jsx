@@ -146,7 +146,7 @@ function ReleaseCard({ release, blockers, names, areas, preview, tip }) {
       <h3>Partner release</h3>
       {release.status === "unsigned" && <p className="small muted">Not released.</p>}
       {release.status === "signed" && <p className="small">Released by {names[release.by] || release.by}.</p>}
-      {release.status === "reopened" && <p className="small">Released, then reopened: the bottom line moved.</p>}
+      {release.status === "reopened" && <p className="small">Released, then reopened: something it signed changed.</p>}
       {blockers.length ? (
         <>
           <div className="small strong">Blocked by</div>

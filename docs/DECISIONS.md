@@ -209,29 +209,38 @@ One unmasked projection and checker result, masked on the way out. It is keyed o
 
 Clients get a 403 from the workpaper routes and have their own question surface (`/api/client/questions`, answer, upload). The examiner reads the current return, masked, and receives no live events. Pinning the examiner's reads to the filing tip is step 5.
 
-## Step 4 build decisions (OPEN until Rohan locks them)
+## Step 4 build decisions (LOCKED 2026-10-15, after Rohan's review)
 
-The workflow on screen (2026-10-15). Code: `frontend/src/components/Act.jsx`, `Forms.jsx`, `History.jsx`, `pages/Timeline.jsx`; server additions in `api.py`, `views.py`, `actions.py`.
+The workflow on screen. Code: `frontend/src/components/Act.jsx`, `Forms.jsx`, `FindingCard.jsx`, `History.jsx`, `pages/Timeline.jsx`; server additions in `api.py`, `views.py`, `actions.py`, `project.py`, `concurrency.py`. D18 and D22 locked as built; D19 changed at the server; D20 locked with the acceptance rule and the disposition answer; D21 locked with one refusal added.
 
-### D18. Forms send intent; every rule stays on the server: OPEN
+### D18. Forms send intent; every rule stays on the server: LOCKED
 
 Each form posts only what the person chose (a figure, a reason, a verification type, a waiver sentence) through one hook, `useAct`. The server computes the rest and answers 403, 422 or 409; the screen shows that answer in the server's words, and a 409 names the act that landed first. Buttons appear only for the role's verbs, but that is convenience: the server decides. The adjustment form previews the estimated effect from the server (`/api/estimate`) before saving; nothing is written by a preview. Evidence files attach to a line, document or finding; the history links to them, and opening one is the logged, cleared-only view D13 describes.
 
-### D19. Disposition says what and why: OPEN
+### D19. Disposition says what and why: LOCKED (changed)
 
-A disposition needs a reason. A duplicate names the document it copies, a superseded document names its replacement, a partial one lists its pages. The form is prefilled from what the checker found (D10 as a duplicate of D09, D31 partial at page 32); a person still records it.
+A disposition needs a reason. A duplicate names the document it copies, a superseded document names its replacement, a partial one lists its pages.
 
-### D20. Findings are answered from the finding: OPEN
+- Changed: a disposition answers the checker's finding only when it names the document the checker named. D10 recorded as a duplicate of D74 leaves `DUPLICATE_DOCUMENT:D10` open; the card says the disposition on file names D74 and the checker found D09. The same holds for superseded (`by` must be D31 for D30).
+- Each document finding states the disposition that answers it (`answer` on the finding, set by the rule that found it). The form is prefilled from that, so the browser holds no copy of the rule; a person still records it, with a reason.
+
+### D20. Findings are answered from the finding: LOCKED (with changes)
 
 A finding card offers "Fix with an adjustment" (prefilled with the proposed figure and linked to the finding, so it becomes addressed), "Accept as is" (a judgment call that must name its authority), a note, and a question. Fix is offered only when the finding proposes a new figure for a line that exists.
 
-### D21. Many at once, one undo: OPEN
+- A document finding (duplicate, superseded, not extracted, unread page) has no figure to fix. Its answer is the disposition on the document: the card offers "Record the disposition", prefilled from the finding's `answer`.
+- An acceptance whose estimated effect is over $1,000 stays on the partner release, the same way a large adjustment does. The server stores the finding's effect on the judgment call when it is made (a figure the browser sends is ignored). The release covers and lists the large acceptances (`acceptances`, covered as `accepted.<finding id>`). A large acceptance after Helen looked gives her release a 409; one undone after the release reopens it, naming the undo. The card says before saving when an acceptance will reach the partner (`partner_if_accepted`, decided on the server).
+
+### D21. Many at once, one undo: LOCKED (one refusal added)
 
 Lines can be selected in an area and verified in one act; accepting a document verifies all its values in one act. One undo reverses the whole act; the undone act stays in the record, struck through, in the history of every line or document it touched.
 
-### D22. Replay is a read: OPEN
+- Added: accepting a document is refused while it is an open duplicate, a superseded copy, or a partial with unread pages not yet dispositioned. Otherwise accepting D10 verifies a second set of wages. A copy or a superseded document gets one reason only (accept the other document); its unread pages are not mentioned, since it is never accepted. D31 can be accepted once a partial disposition covers page 32.
+- Brightpath (D74) stays one acceptance at the summary when the lots tie.
 
-Every read takes `?as_of=YYYY-MM-DD`: the version, documents, agency records and people's acts as they stood at the end of that day. The screen says it is replaying and offers no acts. The timeline interleaves the packet's scripted season with people's acts; any entry can be replayed to.
+### D22. Replay is a read: LOCKED
+
+Every read takes `?as_of=YYYY-MM-DD`, meaning the end of that day: the version, documents, agency records and people's acts as they stood then. The screen says it is replaying and offers no acts; writes take no `as_of` and always act on the current log. Unmask stays available during replay, and the view is logged as of today. The timeline interleaves the packet's scripted season with people's acts; any entry can be replayed to.
 
 ## Build plan
 

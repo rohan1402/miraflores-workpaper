@@ -56,6 +56,8 @@ def prepare(packet: Packet, state: State, result: CheckResult, scopes: ConflictR
     elif action == "verify":
         p = {"verification_type": p.get("verification_type"),
              "values": {t: _current_value(packet, state, t) for t in targets}}
+    elif action == "judgment_call":
+        p["effect"] = _accepted_effect(result, targets, p.get("finding"))
     elif action == "undo":
         target = next((e for e in state.events if f"event:{e.id}" == _one(targets, "event")), None)
         p = {"undoes": {"action": target.action, "targets": list(target.targets)} if target else {}}
@@ -114,9 +116,28 @@ def _verify(packet, state, result, scopes, person, e) -> list[str]:
 
 
 def _accept_document(packet, state, result, scopes, person, e) -> list[str]:
+    """Accepting a document verifies all its values in one act (D21). Refused for a copy, a superseded
+    document, or one with unread pages not yet dispositioned: otherwise accepting D10 would verify a
+    second set of wages. A copy or a superseded document is never accepted, so its unread pages
+    are not mentioned; the other document is the one to accept."""
     reasons = _verification_type(packet, state, result, scopes, person, e)
     if not e.payload.get("values"):
         reasons.append("That document has no values to accept.")
+    doc = e.targets[0]
+    open_findings = [f for f in result.findings if f.status == "open"]
+    disp = state.dispositions.get(doc)
+    if disp and disp.disposition in ("duplicate", "superseded"):
+        other = disp.detail.get("of") or disp.detail.get("by")
+        return reasons + [f"{doc} is dispositioned {disp.disposition}; accept {other} instead."]
+    for f in open_findings:
+        if f.code == "DUPLICATE_DOCUMENT" and f.subject == doc:
+            return reasons + [f"{doc} looks like a copy of {f.details['duplicate_of']}. Record its disposition first."]
+        if f.code == "SUPERSEDED_DOCUMENT" and f.subject == doc:
+            return reasons + [f"{doc} is replaced by the corrected {f.details['by']}. Record its disposition first."]
+    for f in open_findings:
+        if f.code == "PAGE_NOT_READ" and f.subject.startswith(f"{doc}#page"):
+            page = f.subject.split("#page")[1]
+            reasons.append(f"Page {page} of {doc} was never read. Record a partial disposition for it first.")
     return reasons
 
 
@@ -261,6 +282,14 @@ def _waived(result: CheckResult, scopes: ConflictRule, area: str) -> list[dict]:
         out.append({"id": f.id, "federal": effect.federal if effect else 0,
                     "california": effect.california if effect else 0})
     return out
+
+
+def _accepted_effect(result: CheckResult, targets: list[str], finding: str | None) -> dict:
+    """What accepting a finding leaves out of the total: its estimated effect at the moment of the
+    judgment call (D20). Computed here, so a figure the browser sends is never stored."""
+    ids = [t[len("finding:"):] for t in targets if t.startswith("finding:")] + ([finding] if finding else [])
+    effects = [f.effect for f in result.findings if f.id in ids and f.effect]
+    return {"federal": sum(e.federal for e in effects), "california": sum(e.california for e in effects)}
 
 
 def _one(targets: list[str], kind: str) -> str:

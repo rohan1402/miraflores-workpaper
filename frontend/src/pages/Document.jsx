@@ -8,7 +8,9 @@ import { ErrorBox, HumanBadge, Loading, MachineBadge } from "../components/commo
 import FindingCard from "../components/FindingCard.jsx";
 import History from "../components/History.jsx";
 import { ActionBar, useCan } from "../components/Act.jsx";
-import { AcceptForm, AttachForm, DispositionForm, NoteForm, QuestionForm, VerifyForm } from "../components/Forms.jsx";
+import {
+  AcceptForm, AttachForm, DispositionForm, NoteForm, QuestionForm, VerifyForm, suggestedDisposition,
+} from "../components/Forms.jsx";
 import PageText, { printedValue, valueNeedles } from "../components/PageText.jsx";
 import { date } from "../format.js";
 import { href } from "../router.js";
@@ -117,18 +119,6 @@ export default function Document({ docId, params, me, names, refreshKey }) {
   );
 }
 
-// What the checker found suggests the disposition; a person still records it, with a reason.
-function suggestedDisposition(doc, findings) {
-  for (const f of findings) {
-    if (f.code === "DUPLICATE_DOCUMENT" && f.targets.includes(doc.id)) return { disposition: "duplicate", of: f.details.duplicate_of };
-    if (f.code === "SUPERSEDED_DOCUMENT" && f.details.superseded === doc.id) return { disposition: "superseded", by: f.details.by };
-    if (f.code === "DOCUMENT_NOT_EXTRACTED") return { disposition: "not_extracted" };
-  }
-  const unread = findings.filter((f) => f.code === "PAGE_NOT_READ").map((f) => Number(f.id.split("#page")[1]));
-  if (unread.length) return { disposition: "partial", pages: unread };
-  return { disposition: "used" };
-}
-
 function DocumentActions({ doc, tip, findings, reconciliation }) {
   const can = useCan();
   const count = doc.extraction.values;
@@ -137,7 +127,7 @@ function DocumentActions({ doc, tip, findings, reconciliation }) {
       actions={[
         { key: "disposition", label: "Disposition", primary: true, allowed: can("disposition"),
           render: (done) => <DispositionForm doc={doc.id} tip={tip} pages={doc.page_count}
-                                             suggestion={suggestedDisposition(doc, findings)} onDone={done} /> },
+                                             suggestion={suggestedDisposition(doc.id, findings)} onDone={done} /> },
         { key: "accept", label: `Accept all ${count} values`, allowed: can("accept_document") && count > 0,
           render: (done) => <AcceptForm doc={doc.id} tip={tip} count={count} ties={Boolean(reconciliation)} onDone={done} /> },
         { key: "note", label: "Note", allowed: can("note"),

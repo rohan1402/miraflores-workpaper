@@ -172,7 +172,7 @@ export function QuestionForm({ targets, tip, onDone }) {
 }
 
 // Accept a finding as it stands. Firm rule: every judgment call records the authority relied on.
-export function JudgmentForm({ finding, tip, onDone }) {
+export function JudgmentForm({ finding, effect, toPartner, tip, onDone }) {
   const { run, busy, error } = useAct();
   const [decision, setDecision] = useState("");
   const [authority, setAuthority] = useState("");
@@ -192,6 +192,12 @@ export function JudgmentForm({ finding, tip, onDone }) {
       <Field label="Why">
         <textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)} />
       </Field>
+      {toPartner && (
+        <p className="small">
+          Accepting keeps a correction of federal {signed(effect.federal)}, California {signed(effect.california)} off
+          the return. That is over the firm's $1,000 threshold, so the partner release will list it.
+        </p>
+      )}
       <ActError error={error} />
       <Submit busy={busy} disabled={!decision.trim() || !authority.trim()} onCancel={onDone}>
         Record judgment call
@@ -207,6 +213,16 @@ const DISPOSITIONS = [
   ["not_extracted", "Not extracted (content used elsewhere)"],
   ["partial", "Partial: some pages unread"],
 ];
+
+// The disposition the open findings on a document point to, to prefill the form. Each rule says
+// what answers its finding (finding.answer, D19 and D20); the person still chooses and gives the reason.
+export function suggestedDisposition(docId, findings) {
+  const answers = findings.filter((f) => f.status === "open" && f.answer?.document === docId).map((f) => f.answer);
+  const whole = answers.find((a) => a.disposition !== "partial");
+  if (whole) return whole;
+  const pages = answers.flatMap((a) => a.pages || []);
+  return pages.length ? { disposition: "partial", pages } : { disposition: "used" };
+}
 
 // Disposition comes first (D2): what this document is to the return, and why.
 export function DispositionForm({ doc, tip, pages, suggestion = {}, onDone }) {
@@ -240,7 +256,7 @@ export function DispositionForm({ doc, tip, pages, suggestion = {}, onDone }) {
         </Field>
       )}
       {value === "partial" && (
-        <Field label="Pages this covers" hint={`This document has ${pages} pages.`}>
+        <Field label="Pages this covers" hint={pages ? `This document has ${pages} pages.` : undefined}>
           <input value={chosenPages} onChange={(e) => setChosenPages(e.target.value)} placeholder="e.g. 32" />
         </Field>
       )}
@@ -311,14 +327,15 @@ export function SignOffForm({ area, label, tip, openErrors, level, onDone }) {
   );
 }
 
-// The partner signs the return once, and in the same act approves the large adjustments and waivers (D10).
+// The partner signs the return once, and in the same act approves the large adjustments, waivers (D10)
+// and acceptances (D20).
 export function ReleaseForm({ tip, preview, onDone }) {
   const { run, busy, error } = useAct();
   const submit = async (e) => {
     e.preventDefault();
     if (await run({ action: "partner_release", targets: ["return"], tip })) onDone?.();
   };
-  const count = preview.adjustments.length + preview.waivers.length;
+  const count = preview.adjustments.length + preview.waivers.length + preview.acceptances.length;
   return (
     <form onSubmit={submit}>
       {count > 0 ? (
@@ -336,10 +353,15 @@ export function ReleaseForm({ tip, preview, onDone }) {
                 waived in {w.area.replace(/_/g, " ")}: {w.id} (federal {signed(w.federal)}, California {signed(w.california)})
               </li>
             ))}
+            {preview.acceptances.map((a) => (
+              <li key={a.id}>
+                accepted as is: {a.id}, “{a.decision}” (federal {signed(a.federal)}, California {signed(a.california)})
+              </li>
+            ))}
           </ul>
         </div>
       ) : (
-        <p className="small">No adjustment or waiver over $1,000 to sign with it.</p>
+        <p className="small">No adjustment, waiver or acceptance over $1,000 to sign with it.</p>
       )}
       <ActError error={error} />
       <Submit busy={busy} onCancel={onDone}>

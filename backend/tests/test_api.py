@@ -388,3 +388,71 @@ def test_disposition_says_what_and_why(client, payload, reason, expect):
 def test_verify_points_at_something_real(client):
     r = act(client, PRIYA, "verify", ["line:NOPE.1"], {"verification_type": "recalculated"})
     assert r.status_code == 422 and "Nothing to verify" in r.json()["refused"][0]
+
+
+# ---- D21: accepting a whole document --------------------------------------------
+
+ACCEPT = {"verification_type": "agreed_to_source_document"}
+
+
+@pytest.mark.parametrize("doc,expect", [
+    ("D10", "looks like a copy of D09"),
+    ("D30", "replaced by the corrected D31"),
+    ("D31", "Page 32 of D31 was never read"),
+])
+def test_accepting_a_copy_a_superseded_or_unread_document_is_refused(client, doc, expect):
+    r = act(client, PRIYA, "accept_document", [doc], ACCEPT, reason="tied to the form")
+    assert r.status_code == 422 and any(expect in x for x in r.json()["refused"])
+
+
+def test_a_dispositioned_copy_still_cannot_be_accepted(client):
+    act(client, PRIYA, "disposition", ["D10"], {"disposition": "duplicate", "of": "D09"}, reason="phone photo of D09")
+    r = act(client, PRIYA, "accept_document", ["D10"], ACCEPT, reason="tied to the form")
+    assert r.status_code == 422 and "accept D09 instead" in r.json()["refused"][0]
+
+
+def test_the_partial_disposition_opens_the_corrected_form_for_acceptance(client):
+    act(client, PRIYA, "disposition", ["D31"], {"disposition": "partial", "pages": [32]},
+        reason="page 32 read by hand")
+    assert act(client, PRIYA, "accept_document", ["D31"], ACCEPT, reason="tied to the form").status_code == 200
+
+
+def test_brightpath_is_accepted_at_its_summary_in_one_act(client):
+    r = act(client, PRIYA, "accept_document", ["D74"], ACCEPT, reason="lots tie to the printed summary")
+    assert r.status_code == 200
+
+
+# ---- D20: a large acceptance reaches the partner ---------------------------------
+
+C6 = "EVIDENCE_AFTER_COMPUTATION:msg-07"   # keeping the zero basis is worth -1,312 federal, -195 California
+E15 = "PAGE_NOT_READ:D31#page32"            # -21 federal
+
+
+def _accept(client, finding, effect=None):
+    payload = {"decision": "keep as filed", "authority": "Treas. Reg. 1.6001-1(a)"}
+    if effect:
+        payload["effect"] = effect
+    return act(client, PRIYA, "judgment_call", [f"finding:{finding}"], payload, reason="records support it")
+
+
+def test_a_large_acceptance_is_listed_on_the_release_with_the_servers_estimate(client):
+    assert _accept(client, C6, effect={"federal": 1, "california": 1}).status_code == 200   # browser figure ignored
+    listed = client.get("/api/return", headers=as_(HELEN)).json()["release_will_approve"]["acceptances"]
+    assert [(a["id"], a["federal"], a["california"]) for a in listed] == [(C6, -1312, -195)]
+
+
+def test_a_small_acceptance_stays_off_the_release(client):
+    assert _accept(client, E15).status_code == 200
+    assert client.get("/api/return", headers=as_(HELEN)).json()["release_will_approve"]["acceptances"] == []
+
+
+def test_a_document_finding_says_which_disposition_answers_it(client):
+    found = {f["id"]: f for f in client.get("/api/findings", headers=as_(PRIYA)).json()["findings"]}
+    assert found["DUPLICATE_DOCUMENT:D10"]["answer"] == {"document": "D10", "disposition": "duplicate", "of": "D09"}
+    assert found[E15]["answer"] == {"document": "D31", "disposition": "partial", "pages": [32]}
+    assert (found[C6]["partner_if_accepted"], found[E15]["partner_if_accepted"]) == (True, False)
+
+
+def test_a_superseded_document_is_refused_for_one_reason_only(client):
+    r = act(client, PRIYA, "accept_document", ["D30"], ACCEPT, reason="tied to the form")
+    assert r.json()["refused"] == ["D30 is replaced by the corrected D31. Record its disposition first."]

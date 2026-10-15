@@ -69,6 +69,7 @@ class Finding:
     changes: list[Change] = field(default_factory=list)
     details: dict = field(default_factory=dict)
     quotes: list[dict] = field(default_factory=list)  # page passages it relies on: {"ref": page ref, "text": ...}
+    answer: dict | None = None  # a document finding: the disposition that answers it (D20), set by the rule
     status: str = "open"       # open | accepted (judgment call) | addressed (adjustment or disposition)
     addressed_by: int | None = None
     id: str = field(init=False)
@@ -98,7 +99,7 @@ class Finding:
             "targets": self.targets, "evidence": self.evidence, "quotes": self.quotes,
             "changes": [c.as_dict() for c in self.changes],
             "effect": effect.as_dict() if effect else None, "shared": self.shared,
-            "details": self.details, "status": self.status, "addressed_by": self.addressed_by,
+            "details": self.details, "answer": self.answer, "status": self.status, "addressed_by": self.addressed_by,
         }
 
 

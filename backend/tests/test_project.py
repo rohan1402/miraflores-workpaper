@@ -307,3 +307,20 @@ def test_administrator_changes_the_variance_standard(packet):
     count = lambda r: sum(1 for f in r.findings if f.rule == "R10")
     assert count(after) < count(before)
     assert packet.raw["firm"]["starter_standards"]["variance_review"]["flag_if_change_over_percent"] == 10
+
+
+def test_the_partner_release_covers_a_large_acceptance_and_reopens_if_it_is_undone(packet):
+    from workpaper.areas import RETURN
+    from workpaper.project import signoff_payload, signoff_status
+    c6 = "EVIDENCE_AFTER_COMPUTATION:msg-07"
+    accept = ev("judgment_call", [f"finding:{c6}"], payload={
+        "decision": "keep zero basis", "authority": "Treas. Reg. 1.6001-1(a)",
+        "effect": {"federal": -1312, "california": -195}})
+    state = project(packet, log(accept))
+    payload = signoff_payload(state, RETURN, "partner")
+    assert payload["acceptances"] == [c6] and f"accepted.{c6}" in payload["covered"]
+    release = ev("partner_release", ["return"], actor="st-03", role="partner", payload=payload)
+    undo = ev("undo", ["event:1"], payload={"undoes": {"action": "judgment_call", "targets": [f"finding:{c6}"]}})
+    after = project(packet, log(accept, release, undo))
+    status = signoff_status(after, after.partner_release)
+    assert status["status"] == "reopened" and status["causes"] == {"event:3": [f"accepted.{c6}"]}
