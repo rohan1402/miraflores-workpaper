@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+
+# Local event store (SQLite, plus WAL side files)
+var/
+*.db
+*.db-wal
+*.db-shm
+
+# Frontend build output
+node_modules/
+dist/
+
+# Local editor and Claude settings
+.claude/settings.local.json
+.DS_Store
