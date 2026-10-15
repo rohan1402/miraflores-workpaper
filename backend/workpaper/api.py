@@ -164,7 +164,8 @@ def create_app(packet_path: Path | str = PACKET_PATH, db_path: Path | str | None
         if body.person not in everyone:
             raise HTTPException(404, "No such person.")
         response = MaskedJSON(content=_me(everyone[body.person]))
-        response.set_cookie(COOKIE, body.person, httponly=True, samesite="lax")
+        # Kept for 30 days, so the person survives a browser restart (D12: HttpOnly, SameSite=Lax).
+        response.set_cookie(COOKIE, body.person, httponly=True, samesite="lax", max_age=30 * 24 * 3600)
         return response
 
     @app.get("/api/me")

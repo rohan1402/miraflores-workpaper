@@ -19,7 +19,9 @@ import re
 from datetime import date
 
 from ..taxeffect import estimate
-from .common import CONFLICT, Change, Context, Finding, issuer_core, issuer_words, mentions, money
+from .common import (
+    CONFLICT, Change, Context, Finding, issuer_core, issuer_words, mentions, money, quote, quote_from, sentence_with,
+)
 
 CA_WAGES_LINE = "SchCA540NR.1.E"      # Schedule CA (540NR) line 1, column E: California-source wages
 HOME_PROPERTY_TAX_LINE = "SchA.5b"    # Schedule A line 5b: real estate taxes
@@ -95,8 +97,10 @@ def _part_year_finding(ctx, doc, box16, fields, page, employer_state, window) ->
     said = [f"{CA_WAGES_LINE} uses all of {doc['id']} box 16 ({money(box16['value'])}) as California wages. "
             f"The employer is in {employer_state}, and California residency ended {window[1]}."]
     note = re.search(r"\(([^)]*\d{2}/\d{2}/\d{4}[^)]*)\)", page)
+    quotes = []
     if note:
         said.append(f"The W-2 itself says: \"{note.group(1)}\"")
+        quotes += quote(doc["id"], box16["page"], note.group(1))   # the sentence that proves it
     evidence = [f"doc:{doc['id']}#page{box16['page']}"]
     changes = []
 
@@ -108,6 +112,8 @@ def _part_year_finding(ctx, doc, box16, fields, page, employer_state, window) ->
         effect = estimate(ctx.rates, california=[("ca_source_income", -drop)])
         changes.append(Change(CA_WAGES_LINE, old, old - drop, box16["id"], effect))
         evidence.append(stub["ev"]["id"])
+        stub_page = stub["ev"]["page"]
+        quotes += quote(stub["doc"], stub_page, sentence_with(ctx.packet.page_text(stub["doc"], stub_page), "CA taxable wages"))
         said.append(f"The paystub {stub['doc']} shows California taxable wages {money(ca_ytd)} year to date as of "
                     f"{stub['as_of']}: California-source wages from this employer should be about {money(ca_ytd)}, "
                     f"not {money(box16['value'])}.")
@@ -125,7 +131,7 @@ def _part_year_finding(ctx, doc, box16, fields, page, employer_state, window) ->
         code="STATE_WAGES_OUTSIDE_RESIDENCY", subject=doc["id"], rule="R08", kind=CONFLICT,
         title="State wages outside the residency period",
         message=" ".join(said), targets=[f"line:{CA_WAGES_LINE}", box16["id"]], evidence=evidence,
-        severity="error", changes=changes,
+        severity="error", changes=changes, quotes=quotes,
         details={"employer_state": employer_state, "residency_end": window[1]},
     )
 
@@ -174,7 +180,7 @@ def _closing_proration(ctx: Context) -> list[Finding]:
 
 
 def _proration_finding(ctx: Context, closing: dict, credit: dict, address: str, value: float) -> Finding:
-    quote = re.search(r"Seller credit[^.]*?: [\d,]+\.\d{2}", ctx.packet.document_text(closing["id"]))
+    printed = re.search(r"Seller credit[^.]*?: [\d,]+\.\d{2}", ctx.packet.document_text(closing["id"]))
     new_5b = value - credit["value"]
     followers = []  # the total and the capped total move with line 5b; they carry no separate effect
     fed_itemized_change = -credit["value"]
@@ -196,9 +202,9 @@ def _proration_finding(ctx: Context, closing: dict, credit: dict, address: str, 
         kind=CONFLICT,
         title="Property tax for a period before the purchase",
         message=(f"{HOME_PROPERTY_TAX_LINE} deducts the full {money(value)} bill for {address}, but the buyer's closing "
-                 f"statement {closing['id']} says \"{quote.group(0) if quote else money(credit['value'])}\". The seller "
+                 f"statement {closing['id']} says \"{printed.group(0) if printed else money(credit['value'])}\". The seller "
                  f"paid that part; the buyer's deductible share is {money(new_5b)}."),
         targets=[f"line:{HOME_PROPERTY_TAX_LINE}"], evidence=[closing["id"], credit["id"]],
-        severity="error", changes=changes,
+        severity="error", changes=changes, quotes=quote_from(ctx, closing["id"], "Seller credit"),
         details={"seller_credit": credit["value"], "property": address},
     )

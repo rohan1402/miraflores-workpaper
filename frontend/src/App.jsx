@@ -163,9 +163,7 @@ function Nav({ route, refreshKey }) {
             <Tick status={a.reviewer.status} />
           </span>
           <span className="nav-label">{a.label}</span>
-          <span title={`${a.open_findings.error} open errors`}>
-            <Counts counts={{ error: a.open_findings.error }} />
-          </span>
+          <Counts counts={a.open_findings} compact />
         </a>
       ))}
       <div className="nav-group">Evidence</div>

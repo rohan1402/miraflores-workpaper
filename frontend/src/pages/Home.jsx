@@ -43,7 +43,7 @@ export default function Home({ me, names, refreshKey }) {
           <div className="card">
             <h3>If every open correction were made</h3>
             <p className="muted small">
-              The checker's proposed changes, each line built once. <Estimate />
+              Change in tax from the checker's proposed corrections, each line built once. Not a recomputed return. <Estimate />
             </p>
             <div className="effect-pair">
               <EffectFigure label="Federal tax" value={open.federal} />
@@ -161,7 +161,7 @@ function EffectFigure({ label, value }) {
   return (
     <div className="effect-figure">
       <span className="muted small">{label}</span>
-      <span className={`num big ${value < 0 ? "down" : value > 0 ? "up" : ""}`}>
+      <span className={`num estimate-figure ${value < 0 ? "down" : value > 0 ? "up" : ""}`}>
         {value > 0 ? "+" : ""}
         {money(value)}
       </span>

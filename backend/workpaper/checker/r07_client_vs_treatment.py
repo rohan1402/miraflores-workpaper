@@ -20,7 +20,7 @@ from __future__ import annotations
 import re
 
 from ..taxeffect import category_for_line, estimate
-from .common import CONFLICT, Change, Context, Finding, money, prints_amount
+from .common import CONFLICT, Change, Context, Finding, money, prints_amount, quote_from
 
 STOPWORDS = {"the", "and", "with", "about", "this", "that", "from", "for", "his", "her", "per", "are", "was",
              "has", "have", "into", "only", "estimates"}
@@ -64,7 +64,7 @@ def _line_took_client_number(ctx: Context) -> list[Finding]:
             if not printed or any(ev["value"] == value for ev in printed):
                 continue
             doc_amount = printed[0]["value"] if len(printed) == 1 else None
-            quote = snippet(ctx.packet.document_text(doc_id), doc_amount) if doc_amount else ""
+            printed_text = snippet(ctx.packet.document_text(doc_id), doc_amount) if doc_amount else ""
             category = category_for_line(key)
             changes = []
             if doc_amount is not None:
@@ -76,9 +76,10 @@ def _line_took_client_number(ctx: Context) -> list[Finding]:
                 title="Line uses the client's number; the document prints another",
                 message=(f"{key} ({line['label']}) is {money(value)}, the client's figure in {took[0]['id']} "
                          f"(\"{took[0]['answer']}\"). {doc_id} ({ctx.packet.documents[doc_id]['title']}) prints "
-                         + (f"\"{quote}\"." if quote else f"{', '.join(money(ev['value']) for ev in printed)}.")),
+                         + (f"\"{printed_text}\"." if printed_text else f"{', '.join(money(ev['value']) for ev in printed)}.")),
                 targets=[f"line:{key}"], evidence=[took[0]["id"], doc_id] + [ev["id"] for ev in printed],
                 severity="error", changes=changes,
+                quotes=quote_from(ctx, doc_id, f"{doc_amount:,.2f}") if doc_amount is not None else [],
                 details={"client_figure": value, "document_figures": [ev["value"] for ev in printed]},
             ))
     return findings

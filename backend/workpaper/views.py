@@ -235,6 +235,7 @@ def line_trace(packet: Packet, state: State, result: CheckResult, key: str) -> d
         "inputs": [line_row(packet, state, result, k, by_line) for k in line["inputs"] if k in state.lines],
         "used_by": sorted(k for k, other in state.lines.items() if key in other["inputs"]),
         "sources": [resolve_source(packet, state, result, s) for s in line["sources"]],
+        "pages": cited_pages(packet, state, result, key),
         "versions": {v["version"]: packet.lines[v["version"]].get(key, {}).get("value") for v in packet.versions},
         "adjustments": [{"event": a.event_id, "by": a.actor, "at": a.at, "from": a.original, "to": a.value,
                          "reason": a.reason, "applied": a.applied, "effect": effect_view(state, a),
@@ -244,6 +245,39 @@ def line_trace(packet: Packet, state: State, result: CheckResult, key: str) -> d
         "verifications": [_verification(v) for v in state.verifications.get(f"line:{key}", [])],
         "findings": [f.as_dict() for f in result.findings if f"line:{key}" in f.targets],
     }
+
+
+def cited_pages(packet: Packet, state: State, result: CheckResult, key: str) -> list[dict]:
+    """The pages behind a line, printed text in full, so the proof sits next to the number.
+
+    Each page lists the values the line cites from it and the passages that open findings
+    on this line quote from it (the Halvorsen W-2's own note about the work state). Pages a
+    finding relies on that the line does not cite (the paystub) come after, marked as such.
+    """
+    line = state.lines[key]
+    pages: dict[str, dict] = {}
+
+    def page_entry(doc_id: str, page: int, cited: bool) -> dict:
+        ref = page_ref(doc_id, page)
+        if ref not in pages:
+            pages[ref] = {"ref": ref, "document": doc_id, "title": packet.documents[doc_id]["title"], "page": page,
+                          "text": packet.page_text(doc_id, page), "cited": cited, "values": [], "quotes": []}
+        return pages[ref]
+
+    for s in line["sources"]:
+        if s in packet.values:
+            ev = packet.values[s]
+            page_entry(ev["document_id"], ev["page"], True)["values"].append(
+                {"id": s, "field": ev["field"], "label": ev["label"], "value": ev["value"],
+                 "value_type": ev["value_type"], "text_as_read": ev["text_as_read"],
+                 "confidence": ev["confidence"], "machine_state": result.value_states.get(s)})
+    for f in result.findings:
+        if f.status != "open" or f"line:{key}" not in f.targets:
+            continue
+        for q in f.quotes:
+            doc_id, page = parse_page_ref(q["ref"])
+            page_entry(doc_id, page, False)["quotes"].append({"text": q["text"], "finding": f.id, "title": f.title})
+    return sorted(pages.values(), key=lambda p: not p["cited"])
 
 
 def resolve_source(packet: Packet, state: State, result: CheckResult, ref: str) -> dict:
@@ -322,11 +356,14 @@ def document_view(packet: Packet, state: State, result: CheckResult, scopes: Con
                 used_by[s].append(key)
     unread = {int(p) for f in result.findings if f.code == "PAGE_NOT_READ"
               for t in f.targets if t.startswith(f"doc:{doc_id}#page") for p in [parse_page_ref(t)[1]]}
+    findings = [f for f in result.findings if _touches_document(packet, f, doc_id)]
     pages = []
     for page in d["pages"]:
         pages.append({
             "page": page["page"], "ref": page_ref(doc_id, page["page"]), "image": None,
             "text": page["printed_content"], "read": page["page"] not in unread,
+            "quotes": [{"text": q["text"], "finding": f.id, "title": f.title} for f in findings if f.status == "open"
+                       for q in f.quotes if q["ref"] == page_ref(doc_id, page["page"])],
             "values": [{"id": ev["id"], "field": ev["field"], "label": ev["label"], "value": ev["value"],
                         "value_type": ev["value_type"], "text_as_read": ev["text_as_read"],
                         "position": ev["position"], "confidence": ev["confidence"],
@@ -335,7 +372,6 @@ def document_view(packet: Packet, state: State, result: CheckResult, scopes: Con
                        for ev in values_by_page.get(page["page"], [])],
         })
     disp = state.dispositions.get(doc_id)
-    findings = [f for f in result.findings if _touches_document(packet, f, doc_id)]
     return {
         "meta": meta(state),
         "document": {k: v for k, v in d.items() if k != "pages"},

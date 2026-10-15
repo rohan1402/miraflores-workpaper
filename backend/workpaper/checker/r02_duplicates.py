@@ -20,7 +20,7 @@ from difflib import SequenceMatcher
 from itertools import combinations
 
 from ..taxeffect import estimate
-from .common import CONFLICT, OPEN_ITEM, Change, Context, Finding, issuer_core, money
+from .common import CONFLICT, OPEN_ITEM, Change, Context, Finding, issuer_core, money, quote
 
 SAME_VALUES_SHARE = 0.9   # share of fields that must match for two documents to be copies
 
@@ -146,6 +146,10 @@ def _duplicate_page(ctx: Context, doc: dict, p1: int, p2: int, by_page: dict, si
             dollar.effect = estimate(ctx.rates, federal=[("schc_profit", expense_drop)],
                                      california=[("schc_profit", expense_drop)])
         messages.append(f"{dollar.line} {money(dollar.original)} should be {money(dollar.proposed)}.")
+    # What the second copy adds over the first, if anything ("Second scan of the May-Aug sheet ...").
+    text1, text2 = ctx.packet.page_text(doc["id"], p1), ctx.packet.page_text(doc["id"], p2)
+    added = [text2[j1:j2].strip() for tag, _, _, j1, j2 in SequenceMatcher(None, text1, text2).get_opcodes()
+             if tag in ("insert", "replace") and j2 - j1 > 20]
     return Finding(
         code="DUPLICATE_PAGE", subject=f"{doc['id']}#page{p2}", rule="R02", kind=CONFLICT if changes else OPEN_ITEM,
         title="Duplicate page",
@@ -154,7 +158,7 @@ def _duplicate_page(ctx: Context, doc: dict, p1: int, p2: int, by_page: dict, si
         targets=[f"doc:{doc['id']}#page{p2}"] + [f"line:{c.line}" for c in changes],
         evidence=[f"doc:{doc['id']}#page{p1}", f"doc:{doc['id']}#page{p2}"],
         severity="error" if changes else "warning",
-        changes=changes,
+        changes=changes, quotes=quote(doc["id"], p2, added[0] if added else None),
         details={"page": p2, "duplicate_of_page": p1, "text_similarity": round(similarity, 3)},
     )
 

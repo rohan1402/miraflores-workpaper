@@ -2,6 +2,7 @@
 import { useApi } from "../api.js";
 import { ErrorBox, Estimate, HumanBadge, Loading, MachineBadge } from "../components/common.jsx";
 import FindingCard from "../components/FindingCard.jsx";
+import PageText, { printedValue, valueNeedles } from "../components/PageText.jsx";
 import { LineTable } from "./Area.jsx";
 import { date, dateTime, figure, money, VERIFICATION_LABEL } from "../format.js";
 import { href } from "../router.js";
@@ -11,7 +12,8 @@ export default function Line({ lineKey, names, refreshKey }) {
   const areas = useApi("/api/return", refreshKey).data?.areas || [];
   if (error) return <ErrorBox error={error} />;
   if (!data) return <Loading />;
-  const { line, rule, note, inputs, used_by: usedBy, sources, versions, adjustments, verifications, findings, scopes } = data;
+  const { line, rule, note, inputs, used_by: usedBy, sources, pages, versions, adjustments, verifications, findings, scopes } = data;
+  const otherSources = sources.filter((s) => s.kind !== "document_value");
   const label = (id) => areas.find((a) => a.id === id)?.label || id;
 
   return (
@@ -77,11 +79,14 @@ export default function Line({ lineKey, names, refreshKey }) {
         {inputs.length > 0 && <LineTable rows={inputs} names={names} compact />}
       </section>
 
-      {sources.length > 0 && (
+      {(pages.length > 0 || otherSources.length > 0) && (
         <section>
           <h2>Where it came from</h2>
           <div className="sources">
-            {sources.map((s) => (
+            {pages.map((p) => (
+              <CitedPage key={p.ref} page={p} />
+            ))}
+            {otherSources.map((s) => (
               <Source key={s.ref} source={s} names={names} />
             ))}
           </div>
@@ -163,6 +168,45 @@ export default function Line({ lineKey, names, refreshKey }) {
             ))}
           </ul>
         </section>
+      )}
+    </div>
+  );
+}
+
+// A page behind the number, printed text in full: the values it gives, marked where they are printed,
+// and the passages the checker relies on, underlined. The proof sits next to the number.
+function CitedPage({ page }) {
+  const marks = [
+    ...page.values.map((v) => ({ needles: valueNeedles(v), kind: "value", title: `${v.field}: ${v.label}` })),
+    ...page.quotes.map((q) => ({ needles: [q.text], kind: "quote", title: `Relied on by: ${q.title}` })),
+  ];
+  return (
+    <div className={`cited-page ${page.cited ? "" : "quoted-only"}`}>
+      <div className="cited-head">
+        <a href={href.doc(page.document, page.page)}>
+          <strong>{page.document}</strong> page {page.page}
+        </a>
+        <span className="muted small">{page.title}</span>
+        {!page.cited && <span className="tag">not a source of this line; a finding relies on it</span>}
+      </div>
+      <PageText className="page-snippet" text={page.text} marks={marks} />
+      {page.quotes.length > 0 && (
+        <div className="small quote-legend">
+          <span className="mk mk-quote">underlined</span> relied on by {[...new Set(page.quotes.map((q) => q.title))].join("; ")}
+        </div>
+      )}
+      {page.values.length > 0 && (
+        <div className="cited-values">
+          {page.values.map((v) => (
+            <a key={v.id} className="cited-value" href={href.doc(page.document, page.page, v.id)}>
+              <code className="field">{v.field}</code>
+              <span>{v.label}</span>
+              <span className="num">{printedValue(v)}</span>
+              <MachineBadge state={v.machine_state} />
+              <span className={`conf ${v.confidence < 0.8 ? "low" : ""}`}>read at {v.confidence}</span>
+            </a>
+          ))}
+        </div>
       )}
     </div>
   );

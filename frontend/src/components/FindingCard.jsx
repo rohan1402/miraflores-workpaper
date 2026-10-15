@@ -39,7 +39,10 @@ export default function FindingCard({ finding }) {
                 <td className="num muted">{c.from === null ? "not on return" : figure(c.from, c.line)}</td>
                 <td>→</td>
                 <td className="num">{c.to === null ? "removed" : figure(c.to, c.line)}</td>
-                <td className="muted small">corrects {c.component}</td>
+                <td className="muted small">
+                  corrects {c.component}
+                  {c.counted_in && <span className="tag">counted in {c.counted_in}</span>}
+                </td>
               </tr>
             ))}
           </tbody>
@@ -49,10 +52,25 @@ export default function FindingCard({ finding }) {
         <div className="effect small">
           Tax effect: federal <span className="num">{signed(f.effect.federal)}</span>, California{" "}
           <span className="num">{signed(f.effect.california)}</span> <Estimate />
+          {f.status !== "open" && <span className="muted"> · not in the total ({f.status})</span>}
         </div>
       )}
+      {f.shared.map((s, i) => (
+        // The same dollars found by two checks: shown once, in the finding that found them first.
+        <div key={i} className="effect small shared">
+          Tax effect: the same {sharedAmount(s.effect)} on {s.line} is already counted in{" "}
+          <Ref value={s.counted_in}>{s.counted_in}</Ref>. Not added again.
+        </div>
+      ))}
     </article>
   );
+}
+
+function sharedAmount(effect) {
+  const parts = [];
+  if (effect.federal) parts.push(`${money(Math.abs(effect.federal))} federal`);
+  if (effect.california) parts.push(`${money(Math.abs(effect.california))} California`);
+  return parts.join(" and ");
 }
 
 function signed(v) {

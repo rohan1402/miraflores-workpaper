@@ -288,7 +288,11 @@ table.changes td { padding: 2px 10px 2px 0; }
 }
 .paper-image { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
 .paper-text { padding: 7% 8%; font-family: var(--mono); font-size: 11.5px; line-height: 1.65; color: #2a2f38; white-space: pre-wrap; }
-.paper-text mark { background: #ffe58f; outline: 2px solid #f0b400; border-radius: 2px; padding: 0 1px; }
+/* Marks in printed text: a value where it is printed, and passages a finding relies on. */
+mark.mk { color: inherit; border-radius: 2px; padding: 0 1px; }
+mark.mk-value { background: #fff1b8; }
+mark.mk-selected { background: #ffe58f; outline: 2px solid #f0b400; }
+mark.mk-quote, span.mk-quote { background: #e9f0fc; border-bottom: 2px solid var(--open); }
 .boxes { position: absolute; inset: 0; pointer-events: none; }
 .box { position: absolute; border: 1px solid #1d5c8c55; background: #1d5c8c0d; border-radius: 2px; pointer-events: auto; padding: 0; }
 .box.selected { border: 2px solid #f0b400; background: #ffe58f55; z-index: 2; }
@@ -337,3 +341,32 @@ table.changes td { padding: 2px 10px 2px 0; }
   .strip-row { grid-template-columns: repeat(2, 1fr); }
   .strip-title { grid-column: 1 / -1; }
 }
+
+/* ---- labelled counts: errors first ---- */
+.counts { gap: 8px; align-items: center; }
+.count.sev-error { padding: 1px 7px; }
+.count-rest { font-size: 11px; color: var(--muted); }
+.no-errors { font-size: 11px; color: var(--ok); }
+.area-card-head { align-items: flex-start; }
+.area-card-head .counts { flex-direction: column; align-items: flex-end; gap: 2px; text-align: right; }
+
+/* ---- the estimate stays smaller than the balance due it estimates ---- */
+.estimate-figure { font-size: 15px; font-weight: 600; }
+
+/* ---- cited pages in the trace: the proof next to the number ---- */
+.cited-page { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.cited-page.quoted-only { border-style: dashed; }
+.cited-head { display: flex; gap: 10px; align-items: baseline; padding: 9px 14px; border-bottom: 1px solid var(--line); background: #fafbfc; flex-wrap: wrap; }
+.page-snippet {
+  font-family: var(--mono); font-size: 12px; line-height: 1.7; padding: 12px 14px; background: var(--paper);
+  white-space: pre-wrap; max-height: 260px; overflow: auto;
+}
+.quote-legend { padding: 6px 14px; color: var(--muted); border-top: 1px solid var(--line); }
+.cited-values { border-top: 1px solid var(--line); display: flex; flex-direction: column; }
+.cited-value {
+  display: grid; grid-template-columns: 110px 1fr auto auto auto; gap: 10px; align-items: center; padding: 6px 14px;
+  color: var(--ink); font-size: 13px; border-top: 1px solid var(--line);
+}
+.cited-value:first-child { border-top: 0; }
+.cited-value:hover { background: #f8fafc; text-decoration: none; }
+.effect.shared { color: var(--muted); }

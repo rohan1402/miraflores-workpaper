@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import { postJSON, useApi } from "../api.js";
 import { ErrorBox, HumanBadge, Loading, MachineBadge } from "../components/common.jsx";
 import FindingCard from "../components/FindingCard.jsx";
+import PageText, { printedValue, valueNeedles } from "../components/PageText.jsx";
 import { date } from "../format.js";
 import { href } from "../router.js";
 
@@ -129,7 +130,16 @@ function PageView({ page, selected, onSelect, me, names }) {
         )}
         <div className="paper">
           {page.image && <img src={page.image} alt={`Page ${page.page}`} className="paper-image" />}
-          {!page.image && <div className="paper-text">{highlight(page.text, chosen)}</div>}
+          {!page.image && (
+            <PageText
+              className="paper-text"
+              text={page.text}
+              marks={[
+                ...(chosen ? [{ needles: valueNeedles(chosen), kind: "selected", title: chosen.label }] : []),
+                ...page.quotes.map((q) => ({ needles: [q.text], kind: "quote", title: `Relied on by: ${q.title}` })),
+              ]}
+            />
+          )}
           {page.image && (
           <div className="boxes">
             {page.values.map((v) =>
@@ -175,7 +185,7 @@ function PageView({ page, selected, onSelect, me, names }) {
               <div className="value-main">
                 <code className="field">{v.field}</code>
                 <span className="value-label">{v.label}</span>
-                <span className="num value">{revealed[v.id] ?? shown(v)}</span>
+                <span className="num value">{revealed[v.id] ?? printedValue(v)}</span>
               </div>
               <div className="value-meta">
                 <MachineBadge state={v.machine_state} />
@@ -201,15 +211,6 @@ function PageView({ page, selected, onSelect, me, names }) {
   );
 }
 
-// A read value as it would be printed: money with cents, counts with separators, text as is.
-function shown(v) {
-  if (v.value === null) return "nothing read";
-  if (typeof v.value === "number" && (v.value_type === "money" || v.value_type === "integer" || v.value_type === "quantity")) {
-    return v.value.toLocaleString("en-US", v.value_type === "money" ? { minimumFractionDigits: 2, maximumFractionDigits: 2 } : {});
-  }
-  return String(v.value);
-}
-
 function lastVerified(list) {
   const v = list[list.length - 1];
   return { by: v.by, at: v.at, type: v.type };
@@ -224,33 +225,3 @@ function boxStyle(p) {
   };
 }
 
-// Mark where the selected value appears in the printed text: the exact location it came from.
-function highlight(text, value) {
-  for (const needle of needlesFor(value)) {
-    const at = text.indexOf(needle);
-    if (at >= 0) {
-      return (
-        <>
-          {text.slice(0, at)}
-          <mark>{needle}</mark>
-          {text.slice(at + needle.length)}
-        </>
-      );
-    }
-  }
-  return text;
-}
-
-// The ways a value can be printed: as the pipeline read it, or formatted from the value.
-function needlesFor(value) {
-  if (!value) return [];
-  const list = [];
-  if (value.text_as_read) list.push(String(value.text_as_read));
-  if (typeof value.value === "number") {
-    list.push(value.value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
-    list.push(value.value.toLocaleString("en-US"));
-  } else if (value.value !== null) {
-    list.push(String(value.value));
-  }
-  return list.filter((s) => s && s.length > 1);
-}

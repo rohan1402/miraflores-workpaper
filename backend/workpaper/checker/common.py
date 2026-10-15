@@ -42,6 +42,7 @@ class Change:
     proposed: object
     component: str
     effect: Effect | None = None
+    counted_in: str | None = None   # set when another finding already counts these same dollars
 
     @property
     def delta(self) -> float:
@@ -49,7 +50,7 @@ class Change:
 
     def as_dict(self) -> dict:
         return {"line": self.line, "from": self.original, "to": self.proposed, "component": self.component,
-                "effect": self.effect.as_dict() if self.effect else None}
+                "effect": self.effect.as_dict() if self.effect else None, "counted_in": self.counted_in}
 
 
 @dataclass
@@ -65,6 +66,7 @@ class Finding:
     severity: str = "warning"  # error | warning | info
     changes: list[Change] = field(default_factory=list)
     details: dict = field(default_factory=dict)
+    quotes: list[dict] = field(default_factory=list)  # page passages it relies on: {"ref": page ref, "text": ...}
     status: str = "open"       # open | accepted (judgment call) | addressed (adjustment or disposition)
     addressed_by: int | None = None
     id: str = field(init=False)
@@ -75,17 +77,25 @@ class Finding:
 
     @property
     def effect(self) -> Effect | None:
-        """The finding's estimated effect: its pieces added exactly, rounded once."""
-        return Effect.combine([c.effect for c in self.changes])
+        """The dollars this finding counts: its own pieces added exactly, rounded once.
+        Pieces another finding already counts are left out, so the cards add up to the total."""
+        return Effect.combine([c.effect for c in self.changes if c.counted_in is None])
+
+    @property
+    def shared(self) -> list[dict]:
+        """Pieces whose dollars are already counted in another finding (the same payment, found twice)."""
+        return [{"line": c.line, "component": c.component, "counted_in": c.counted_in,
+                 "effect": c.effect.as_dict() if c.effect else None}
+                for c in self.changes if c.counted_in is not None and c.effect is not None]
 
     def as_dict(self) -> dict:
         effect = self.effect
         return {
             "id": self.id, "code": self.code, "rule": self.rule, "kind": self.kind, "severity": self.severity,
             "title": self.title, "message": self.message,
-            "targets": self.targets, "evidence": self.evidence,
+            "targets": self.targets, "evidence": self.evidence, "quotes": self.quotes,
             "changes": [c.as_dict() for c in self.changes],
-            "effect": effect.as_dict() if effect else None,
+            "effect": effect.as_dict() if effect else None, "shared": self.shared,
             "details": self.details, "status": self.status, "addressed_by": self.addressed_by,
         }
 
@@ -208,6 +218,28 @@ def issuer_words(issuer: str, n: int = 2) -> str:
 
 def mentions(text: str, phrase: str) -> bool:
     return bool(phrase) and phrase.lower() in text.lower()
+
+
+def sentence_with(text: str, needle: str) -> str | None:
+    """The printed sentence (or semicolon clause) that contains `needle`, exactly as printed."""
+    for part in re.split(r"(?<=[.;])\s+", text):
+        if needle in part:
+            return part.strip()
+    return None
+
+
+def quote(doc_id: str, page: int, text: str | None) -> list[dict]:
+    """A page passage a finding relies on, for the screen to mark next to the number."""
+    return [{"ref": page_ref(doc_id, page), "text": text}] if text else []
+
+
+def quote_from(ctx: "Context", doc_id: str, needle: str) -> list[dict]:
+    """The printed sentence containing `needle`, on whichever page of the document prints it."""
+    for page in ctx.packet.documents[doc_id]["pages"]:
+        sentence = sentence_with(page["printed_content"], needle)
+        if sentence:
+            return quote(doc_id, page["page"], sentence)
+    return []
 
 
 def lot_fields(packet: Packet, doc_id: str) -> dict[str, dict]:

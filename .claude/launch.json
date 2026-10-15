@@ -4,7 +4,7 @@
     {
       "name": "workpaper",
       "runtimeExecutable": ".venv/bin/uvicorn",
-      "runtimeArgs": ["workpaper.api:app", "--app-dir", "backend", "--port", "8000", "--reload", "--reload-dir", "backend"],
+      "runtimeArgs": ["workpaper.api:app", "--app-dir", "backend", "--port", "8000", "--reload", "--reload-dir", "backend", "--timeout-graceful-shutdown", "3"],
       "port": 8000
     },
     {

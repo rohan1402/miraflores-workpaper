@@ -17,11 +17,15 @@ Form 1098), E10 (sweep interest on the composite 1099 and on the bank's 1099-INT
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from itertools import combinations
 
 from ..taxeffect import category_for_line, estimate
-from .common import CONFLICT, Change, Context, Finding, issuer_core, issuer_words, mentions, money, prints_amount
+from .common import (
+    CONFLICT, Change, Context, Finding, issuer_core, issuer_words, mentions, money, prints_amount, quote, quote_from,
+    sentence_with,
+)
 
 MAX_SOURCES_FOR_SUBSET_SEARCH = 16
 
@@ -43,14 +47,15 @@ def check(ctx: Context) -> list[Finding]:
             if a.doc == b.doc:
                 continue
             for inner, outer in ((a, b), (b, a)):
-                why = contains(ctx, outer.doc, inner)
-                if why is None:
+                found = contains(ctx, outer.doc, inner)
+                if found is None:
                     continue
+                why, quotes = found
                 pair = (inner.via, inner.doc, outer.doc)
                 if pair in seen_pairs:
                     break
                 seen_pairs.add(pair)
-                findings.append(_finding(ctx, key, inner, outer, why))
+                findings.append(_finding(ctx, key, inner, outer, why, quotes))
                 break
     return findings
 
@@ -92,8 +97,9 @@ def _subset_summing_to(evs: list[dict], total: float) -> list[dict] | None:
     return None
 
 
-def contains(ctx: Context, outer_doc: str, inner: Contribution) -> str | None:
-    """Does `outer_doc` (or its issuer's other documents) already contain `inner`'s money? Say why."""
+def contains(ctx: Context, outer_doc: str, inner: Contribution) -> tuple[str, list[dict]] | None:
+    """Does `outer_doc` (or its issuer's other documents) already contain `inner`'s money?
+    Returns why, and the printed passage that shows it."""
     docs = ctx.packet.documents
     inner_issuer, outer_issuer = docs[inner.doc]["issuer"], docs[outer_doc]["issuer"]
     family = [d["id"] for d in ctx.documents() if issuer_core(d["issuer"]) == issuer_core(outer_issuer)]
@@ -104,19 +110,25 @@ def contains(ctx: Context, outer_doc: str, inner: Contribution) -> str | None:
             for page in docs[doc_id]["pages"]:
                 text = page["printed_content"]
                 if mentions(text, inner_name) and prints_amount(text, inner.amount):
+                    # Quote where the page names the other issuer and where it prints the amount.
+                    named = re.search(re.escape(inner_name), text, flags=re.I)
+                    passages = dict.fromkeys(filter(None, [sentence_with(text, named.group(0)) if named else None,
+                                                           sentence_with(text, f"{inner.amount:,.2f}")]))
                     return (f"{doc_id} page {page['page']} names {docs[inner.doc]['issuer']} and prints "
-                            f"{money(inner.amount)}: the money is already in {outer_doc}.")
+                            f"{money(inner.amount)}: the money is already in {outer_doc}.",
+                            [q for p in passages for q in quote(doc_id, page["page"], p)])
 
     if issuer_words(inner_issuer, 1) == issuer_words(outer_issuer, 1):
         form = f"form {docs[outer_doc]['document_type']}".lower()
         text = ctx.packet.document_text(inner.doc).lower()
         if form in text and ("reported on" in text or "included in" in text):
             return (f"{inner.doc} says its amount is reported on the {docs[outer_doc]['document_type']} "
-                    f"from the same lender ({outer_doc}).")
+                    f"from the same lender ({outer_doc}).",
+                    quote_from(ctx, inner.doc, "reported on") or quote_from(ctx, inner.doc, "included in"))
     return None
 
 
-def _finding(ctx: Context, key: str, inner: Contribution, outer: Contribution, why: str) -> Finding:
+def _finding(ctx: Context, key: str, inner: Contribution, outer: Contribution, why: str, quotes: list) -> Finding:
     docs = ctx.packet.documents
     category = category_for_line(inner.via) or category_for_line(key)
     effect = estimate(ctx.rates, federal=[(category, -inner.amount)], california=[(category, -inner.amount)]) \
@@ -134,6 +146,6 @@ def _finding(ctx: Context, key: str, inner: Contribution, outer: Contribution, w
         targets=[f"line:{key}"] + ([f"line:{inner.via}"] if inner.via != key else []) + ([inner.ev] if inner.ev else []),
         evidence=[inner.doc, outer.doc],
         severity="error",
-        changes=[change],
+        changes=[change], quotes=quotes,
         details={"counted_twice": inner.amount, "from": inner.doc, "already_in": outer.doc},
     )

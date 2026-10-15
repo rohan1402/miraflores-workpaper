@@ -211,6 +211,16 @@ def test_trace_shows_client_answers_as_their_own_kind_of_evidence(client):
     assert trace["used_by"] == ["F1040.33"]
 
 
+def test_the_trace_puts_the_page_next_to_the_number(client):
+    pages = {p["ref"]: p for p in client.get("/api/lines/SchCA540NR.1.E", headers=as_(DANIEL)).json()["pages"]}
+    w2 = pages["doc:D09#page1"]
+    assert w2["cited"] and {v["field"] for v in w2["values"]} == {"box16", "box12_W"}
+    assert "Employer payroll kept California as the work state through 09/30/2025" in w2["text"]
+    assert "SSN ***-**-2287" in w2["text"]                               # the page is masked on the way out
+    assert any("work state" in q["text"] for q in w2["quotes"])
+    assert pages["doc:D73#page1"]["cited"] is False                      # the paystub a finding relies on
+
+
 def test_document_says_why_it_landed_nowhere(client):
     d10 = client.get("/api/documents/D10", headers=as_(PRIYA)).json()
     assert d10["landed_on"] == [] and d10["not_used_because"] == "duplicate of D09 (not yet dispositioned)"

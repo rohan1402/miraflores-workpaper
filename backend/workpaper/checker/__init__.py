@@ -137,6 +137,7 @@ def build_corrections(findings: list[Finding]) -> tuple[dict, dict]:
             key = (c.line, c.component)
             if key in pieces:
                 found_by[key].append(f.id)
+                c.counted_in = found_by[key][0]   # the card shows "same dollars, counted there"
                 if abs(pieces[key].delta - c.delta) > 0.005:
                     disagreements.append({"line": c.line, "component": c.component, "findings": list(found_by[key])})
                 continue
@@ -157,7 +158,8 @@ def build_corrections(findings: list[Finding]) -> tuple[dict, dict]:
         "federal": total.federal if total else 0,
         "california": total.california if total else 0,
         "estimate": True,
-        "findings": sorted({fid for ids in found_by.values() for fid in ids}),
+        # The findings whose cards carry these dollars (each piece belongs to the finding that found it first).
+        "findings": sorted({ids[0] for key, ids in found_by.items() if pieces[key].effect is not None}),
         "disagreements": disagreements,
     }
     return corrected, net

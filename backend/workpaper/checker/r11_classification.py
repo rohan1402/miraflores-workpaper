@@ -21,7 +21,7 @@ import re
 from datetime import date
 
 from ..taxeffect import estimate
-from .common import PROMPT, Change, Context, Finding, money
+from .common import PROMPT, Change, Context, Finding, money, quote_from
 
 DE_MINIMIS_PER_ITEM = 2500           # IRS de minimis safe harbor without an audited financial statement
 IMPROVEMENT_WORDS = re.compile(r"\b(install(ed)?|replace(d|ment)?|new (\S+ ){0,3}(system|roof|unit)|removed)\b", re.I)
@@ -83,8 +83,19 @@ def _improvement(ctx: Context, key: str, line: dict, invoice: dict, total: dict,
         targets=[f"line:{key}", total["id"]], evidence=[invoice["id"]] + _call_notes_mentioning(ctx, ["hvac", "heat pump", "furnace"]),
         severity="warning",
         changes=[Change(key, old, old - amount, total["id"], effect)],
+        quotes=_improvement_passages(ctx, invoice["id"], text),
         details={"amount": amount, "placed_in_service": placed, "first_year_depreciation": first_year},
     )
+
+
+def _improvement_passages(ctx: Context, doc_id: str, text: str) -> list[dict]:
+    """The invoice sentences that say what was removed, replaced or installed (at most two)."""
+    out: list[dict] = []
+    for m in IMPROVEMENT_WORDS.finditer(text):
+        for q in quote_from(ctx, doc_id, m.group(0)):
+            if q not in out:
+                out.append(q)
+    return out[:2]
 
 
 def _invoice_date(ctx: Context, doc_id: str) -> str | None:

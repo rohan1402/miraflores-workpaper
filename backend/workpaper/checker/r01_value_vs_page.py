@@ -13,7 +13,9 @@ from __future__ import annotations
 
 import re
 
-from .common import DISAGREEMENT, Context, Finding, appears_on_page, issuer_core, issuer_words, money, page_of
+from .common import (
+    DISAGREEMENT, Context, Finding, appears_on_page, issuer_core, issuer_words, money, page_of, quote, sentence_with,
+)
 
 TIN = re.compile(r"\b\d{2}-\d{7}\b")
 SSN = re.compile(r"\b\d{3}-\d{2}-\d{4}\b")
@@ -55,6 +57,8 @@ def _values_vs_pages(ctx: Context) -> list[Finding]:
             targets=[ev["id"]] + [f"line:{k}" for k in lines],
             evidence=[page_of(ev)],
             severity="info" if ev["value"] == 0 and not lines else "warning",
+            quotes=[q for printed_id in details.get("printed_ids_on_page", [])[:1]
+                    for q in quote(ev["document_id"], ev["page"], sentence_with(page, printed_id))],
             details=details,
         ))
     return findings

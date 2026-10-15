@@ -15,7 +15,7 @@ from __future__ import annotations
 import re
 
 from ..taxeffect import estimate, gain_category
-from .common import DISAGREEMENT, OPEN_ITEM, Change, Context, Finding, amounts_in, lot_fields, money
+from .common import DISAGREEMENT, OPEN_ITEM, Change, Context, Finding, amounts_in, lot_fields, money, quote
 
 BROKER_TYPES = {"1099-composite", "1099-B", "1099-DA"}
 LOT_ON_PAGE = re.compile(
@@ -126,6 +126,7 @@ def _unread_page(ctx: Context, d: dict, page: dict, superseded: bool, gap: dict 
         evidence=[page_ref],
         severity="info" if superseded else "error",
         changes=[] if superseded else changes,
+        quotes=quote(d["id"], page["page"], lot.group(0)) if lot else [],
         details={"explains_gap": explains_gap, "superseded": superseded},
     )
     if disp and disp.disposition == "partial" and page["page"] in disp.detail.get("pages", []):

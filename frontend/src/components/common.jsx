@@ -26,17 +26,21 @@ export function SeverityDot({ severity }) {
   return <span className={`dot sev-${severity}`} title={SEVERITY_LABEL[severity]} />;
 }
 
-export function Counts({ counts }) {
+// Open findings, labelled: errors first (they can change the tax or block filing), then warnings and notes.
+export function Counts({ counts, compact }) {
   if (!counts) return null;
+  const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+  const rest = [
+    counts.warning ? plural(counts.warning, "warning") : null,
+    counts.info ? plural(counts.info, "note") : null,
+  ].filter(Boolean);
+  if (compact) {
+    return counts.error ? <span className="count sev-error" title={plural(counts.error, "open error")}>{counts.error}</span> : null;
+  }
   return (
     <span className="counts">
-      {["error", "warning", "info"].map((s) =>
-        counts[s] ? (
-          <span key={s} className={`count sev-${s}`} title={`${counts[s]} ${SEVERITY_LABEL[s].toLowerCase()}`}>
-            {counts[s]}
-          </span>
-        ) : null,
-      )}
+      {counts.error ? <span className="count sev-error">{plural(counts.error, "error")}</span> : <span className="no-errors">no errors</span>}
+      {rest.length > 0 && <span className="count-rest">{rest.join(" · ")}</span>}
     </span>
   );
 }

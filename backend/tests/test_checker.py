@@ -52,6 +52,35 @@ def test_net_effect_matches_errors_md(result):
     assert (result.net_effect["federal"], result.net_effect["california"]) == (-8753, -3317)
 
 
+def test_the_cards_add_up_to_the_total(result):
+    """A reviewer will add the cards. The same dollars found twice are shown once."""
+    cards = [f.effect for f in result.findings if f.status == "open" and f.effect]
+    assert (sum(e.federal for e in cards), sum(e.california for e in cards)) == (-8753, -3317)
+
+
+def test_the_same_payment_found_twice_is_counted_in_one_card(result):
+    first = result.by_id("ESTIMATES_VS_FTB_ACCOUNT:F540NR.72")
+    second = result.by_id("TAX_YEAR_FIELD_CONFLICT:F540NR.72:ev-1076")
+    assert first.effect.california == 3500
+    assert second.effect is None
+    assert second.shared == [{"line": "F540NR.72", "component": "ev-1075", "counted_in": first.id,
+                              "effect": second.changes[0].effect.as_dict()}]
+
+
+def test_every_quote_is_printed_on_its_page(result, packet):
+    from workpaper.packet import parse_page_ref
+    quotes = [(f.id, q) for f in result.findings for q in f.quotes]
+    assert len(quotes) >= 12
+    for fid, q in quotes:
+        assert q["text"] in packet.page_text(*parse_page_ref(q["ref"])), fid
+
+
+def test_the_halvorsen_finding_quotes_its_own_w2(result):
+    f = find(result, "R08", "line:SchCA540NR.1.E")
+    assert {"ref": "doc:D09#page1",
+            "text": "Employment began 06/02/2025. Employer payroll kept California as the work state through 09/30/2025."} in f.quotes
+
+
 # ---- details that make each finding useful, not just present --------------------
 
 def test_e1_rsu_lots_are_matched_to_the_supplement(result):

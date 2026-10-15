@@ -21,4 +21,6 @@ COPY data/okafor_lindqvist_2025_packet.json data/okafor_lindqvist_2025_packet.js
 COPY --from=web /app/frontend/dist frontend/dist
 EXPOSE 8000
 # One worker on purpose: the live-update broadcaster and the SQLite writer live in this one process.
-CMD ["sh", "-c", "uvicorn workpaper.api:app --app-dir backend --host 0.0.0.0 --port ${PORT:-8000} --workers 1"]
+# Live streams never close on their own, so a restart drops them after 3 seconds instead of waiting
+# forever; browsers reconnect and catch up with Last-Event-ID.
+CMD ["sh", "-c", "uvicorn workpaper.api:app --app-dir backend --host 0.0.0.0 --port ${PORT:-8000} --workers 1 --timeout-graceful-shutdown 3"]
