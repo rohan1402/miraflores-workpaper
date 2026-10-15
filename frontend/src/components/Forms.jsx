@@ -676,3 +676,33 @@ export function StandardForm({ path, current, tip, onDone }) {
     </form>
   );
 }
+
+// A planning decision for 2026 (D32): which estimate method the firm uses, and the authority for it.
+export function PlanDecisionForm({ planRef, tip, onDone }) {
+  const { run, busy, error } = useAct();
+  const [decision, setDecision] = useState("");
+  const [authority, setAuthority] = useState("");
+  const [reason, setReason] = useState("");
+  const submit = async (e) => {
+    e.preventDefault();
+    if (await run({ action: "judgment_call", targets: [planRef], payload: { decision, authority }, reason, tip })) onDone?.();
+  };
+  return (
+    <form onSubmit={submit}>
+      <Field label="Method">
+        <input value={decision} onChange={(e) => setDecision(e.target.value)} autoFocus
+               placeholder="e.g. 90% of projected 2026 California-source tax" />
+      </Field>
+      <Field label="Authority relied on" hint="Required by the firm for every judgment call.">
+        <input value={authority} onChange={(e) => setAuthority(e.target.value)} placeholder="e.g. R&TC 19136.3" />
+      </Field>
+      <Field label="Why">
+        <textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)} />
+      </Field>
+      <ActError error={error} />
+      <Submit busy={busy} disabled={!decision.trim() || !authority.trim()} onCancel={onDone}>
+        Record the method
+      </Submit>
+    </form>
+  );
+}

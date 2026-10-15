@@ -93,7 +93,8 @@ def prepare(packet: Packet, state: State, result: CheckResult, scopes: ConflictR
 def validate(packet: Packet, state: State, result: CheckResult, scopes: ConflictRule,
              person: dict, event: Event) -> None:
     """Apply the firm's rules to a prepared event. Raises Refusal(422) with every reason that applies."""
-    if event.action in FROZEN_REFUSES and (status := filing_status(state))["frozen"]:
+    planning = event.action == "judgment_call" and event.targets and all(ref_kind(t) == "plan" for t in event.targets)
+    if event.action in FROZEN_REFUSES and not planning and (status := filing_status(state))["frozen"]:
         raise Refusal(422, [f"The return was filed (event {status['filed'].event_id}) and is frozen. "
                             f"Open an amendment to change it."])
     check = CHECKS.get(event.action)
@@ -104,7 +105,7 @@ def validate(packet: Packet, state: State, result: CheckResult, scopes: Conflict
 
 # After filing, nothing that changes the return or its record is accepted until an amendment opens
 # (D25). Notes, questions, answers, evidence, time and the notice response still append; the
-# firm's standards are firm-wide, not this return's.
+# firm's standards are firm-wide, not this return's; a planning decision is about 2026 (D32).
 FROZEN_REFUSES = (GUARDED | {"judgment_call"}) - {"set_standard", "open_amendment", "release_notice_response"}
 
 

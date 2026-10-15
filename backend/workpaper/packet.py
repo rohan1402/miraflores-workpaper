@@ -153,6 +153,8 @@ def ref_kind(ref: str) -> str:
         return "notice"
     if ref.startswith("time:"):
         return "time"
+    if ref.startswith("plan:"):
+        return "plan"
     return "unknown"
 
 

@@ -411,6 +411,28 @@ def create_app(packet_path: Path | str = PACKET_PATH, db_path: Path | str | None
         html = views_filing.export_html(released, packet.raw["firm"]["name"])
         return HTMLResponse(html, headers={"Content-Disposition": 'attachment; filename="notice-response.html"'})
 
+    # ---- rolling forward to 2026 (D30 to D33) --------------------------------
+
+    def _rollforward_view(as_of: str | None) -> dict:
+        from .filing import filing_status
+        from .rollforward import rollforward
+        state, result = snapshots.get(replay_date(as_of))
+        filed = filing_status(state)["filed"]
+        if filed is None:
+            return rollforward(packet, state, result, None, state)
+        as_filed = project(packet, [e for e in state.events if e.id <= filed.event_id], as_of=state.as_of)
+        return rollforward(packet, as_filed, run_checker(packet, as_filed), filed, state)
+
+    @app.get("/api/rollforward")
+    def roll_forward(as_of: str | None = None, person: dict = Depends(workpaper_reader)):
+        return _rollforward_view(as_of)
+
+    @app.get("/api/rollforward/export")
+    def roll_forward_export(person: dict = Depends(workpaper_reader)):
+        from .rollforward import export_html
+        html = export_html(masker(_rollforward_view(None)), packet.raw["firm"]["name"])
+        return HTMLResponse(html, headers={"Content-Disposition": 'attachment; filename="2026-opening.html"'})
+
     # ---- the firm: time, standards, search ------------------------------------
 
     @app.get("/api/firm/time")

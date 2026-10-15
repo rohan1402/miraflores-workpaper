@@ -301,6 +301,37 @@ Code: `backend/workpaper/views_firm.py`; screen `pages/Firm.jsx`, `pages/Search.
 - **View log**: the existing log of unmasked views and file opens, now on the firm page for the partner and the administrator.
 - Status is the filing stage and the deadlines. The firm's twelve required steps are not built as a checklist, and not in the roll-forward step either (D26).
 
+## Roll-forward build decisions (2026-10-15; Rohan's answers LOCKED, implementation OPEN until he reviews)
+
+Carrying 2025 into 2026 for next year's preparer (the 2027-01-15 event): the carryovers and the 2026 estimates (D26). Rohan answered four questions before the build.
+
+### D30. Carryovers are traced and flagged, never re-estimated: LOCKED (Rohan)
+
+Each carryover shows its trace: what came in from 2024, the 2025 line it is worked out on, what goes out to 2026, and its value at v1, v2 and v3. The engine computed them before anyone adjusted anything and cannot be rerun, so if a person adjusted a line a carryover rests on, or an open checker correction touches one, it is flagged "moved since the engine computed it: recompute". Example: the $2,786 SEP excess rests on Schedule C net profit, which the Schedule C corrections lower. No new figure is invented.
+
+### D31. The federal safe harbor is built on the return as filed: LOCKED (Rohan)
+
+110% of the 2025 total tax of the accepted transmission (2025 AGI over $150,000), in four equal installments. Before filing, the return as it stands, labelled "not filed yet". Total tax moves with each adjustment's estimated tax effect, but not with payment corrections, which change the balance and not the tax.
+
+### D32. California 2026: show both, the firm decides: LOCKED (Rohan)
+
+The plan computes 110% of 2025 California tax (30/40/30 on April 15, June 15 and January 15) and says beside it why that likely overpays: in 2026 California taxes only California-source income (the Sacramento rental, Ridgeline's share), and the 90% method needs a 2026 projection the engine cannot make. The firm records which method it uses as a judgment call with its authority, and the plan shows that decision.
+
+### D33. Rolling forward is a screen and an export: LOCKED (Rohan)
+
+A read-only "2026 opening" screen built from the return as filed: carryovers with their history, the asset register's ending depreciation (federal, California, AMT), and the 2026 estimates. Plus a one-file export like the examiner's. No new act; it updates if 2025 is amended.
+
+### D34. How the roll-forward is built: OPEN
+
+Code: `backend/workpaper/rollforward.py`; screen `pages/RollForward.jsx` ("2026 opening"); routes `/api/rollforward` and `/api/rollforward/export`.
+
+- **Where each carryover is worked out** is form knowledge kept in one table (`CARRYOVER_LINES`): capital losses on Schedule D (lines 6, 14, 16), passive losses on Form 8582 (1c, 4), the Form 8801 credit on Form 6251 line 11, charitable on Schedule A line 14, section 179 on Form 4562, IRA basis on Form 8606 line 14, S corporation basis on Form 7203 line 15, the SEP excess on Schedule 1 line 16. Ridgeline's capital account is not a return line; it traces to the K-1's ending capital (`cap_end`, D37).
+- **History** is what came in from 2024 (`carryovers_into_2025`), the engine's figure at v1, v2 and v3 (the Form 8801 credit moved 3,722, 3,700, 3,871), and what goes out.
+- **The flag** looks at every line a carryover is built from, all the way down the inputs. If any carries an applied adjustment or an open checker correction, the carryover reads "moved since the engine computed it: recompute" and names the lines. The Form 8801 credit rests on taxable income, so nearly any correction flags it; that is true, not noise.
+- **The return as filed** is the projection up to the last filed transmission, with its own checker run. An open amendment does not move the opening until the amended return is filed. The California method decision is read from the current log, since it is made after filing.
+- **The 2026 estimates**: 110% of the 2025 total tax (federal four equal installments, the last taking the rounding; California 30/40/30), each installment marked when its due date has passed. The 100% rule below $150,000 of AGI is kept for completeness; this household is above it on both.
+- **The California method** is a judgment call on `plan:california_estimates_2026`, with authority. It is allowed after filing: a planning decision is about 2026, so the freeze lets it through, while a judgment call on the filed return is still refused.
+
 ## Build plan
 
 1. Hunt the remaining planted errors (6 leads above so far).

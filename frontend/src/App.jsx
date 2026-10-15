@@ -20,6 +20,7 @@ import Notice from "./pages/Notice.jsx";
 import Examiner from "./pages/Examiner.jsx";
 import Firm from "./pages/Firm.jsx";
 import Search from "./pages/Search.jsx";
+import RollForward from "./pages/RollForward.jsx";
 
 export default function App() {
   const route = useRoute();
@@ -123,6 +124,8 @@ function Page({ route, me, names, refreshKey }) {
       return <Firm {...props} />;
     case "search":
       return <Search {...props} />;
+    case "roll-forward":
+      return <RollForward {...props} />;
     case "area":
       return <Area id={route.id} {...props} />;
     case "line":
@@ -259,6 +262,9 @@ function Nav({ route, surface, refreshKey }) {
       </a>
       <a className={at("notice") ? "active" : ""} href={href.notice()}>
         Notices
+      </a>
+      <a className={at("roll-forward") ? "active" : ""} href={href.rollForward()}>
+        2026 opening
       </a>
       <div className="nav-group">Firm</div>
       <a className={at("firm") ? "active" : ""} href={href.firm()}>
