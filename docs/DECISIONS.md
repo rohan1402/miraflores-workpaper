@@ -77,7 +77,7 @@ Known tradeoffs: more complex than CRUD; rebuilding state means replaying entrie
 
 - Signed areas (the parts of the return that own documents): wages and stock compensation, investments and digital assets, business, rentals and the sale, passthroughs and basis, deductions and credits, payments.
 - Time-only buckets (budgeted, not signed): intake and engagement, partner review.
-- California: a real time budget and a cross-cutting review lens, not an independent signature. Every area shows its state column next to the federal one (e.g. W-2 box 15/16/17 beside box 1). A California finding reopens the area that owns the document. (REVISIT: our interpretation of the mentor's point; confirm during build.)
+- California: a real time budget and a cross-cutting review lens. Every area shows its state column next to the federal one (e.g. W-2 box 15/16/17 beside box 1). A California finding reopens the area that owns the document. (REVISIT resolved in D8: California gets its own preparer and reviewer signature over a view of the California figures, and owns no documents.)
 - Two ticks per area: preparer and reviewer, never the same person (firm rule).
 - Partner release = the "Partner sign-off" required step. Blocked while any review note is open or any area is unsigned.
 - Any adjustment with a federal or California tax effect over $1,000 needs Helen's sign-off on that adjustment (firm rule).
@@ -106,47 +106,70 @@ Context numbers: AGI $228,409 (2024) to $445,590 (2025); wages $156,039 to $212,
 
 ---
 
-## Step 1 build decisions (OPEN until Rohan locks them)
+## Step 1 build decisions (LOCKED 2026-10-14, after Rohan's review)
 
-Made while building the backend core (2026-10-14). Each one is a call Rohan can change. Code lives in `backend/workpaper/`.
+Made while building the backend core and reviewed by Rohan. D5, D8, D9, D10 locked as proposed with his additions; D6, D7, D11 locked with his changes. Code lives in `backend/workpaper/`.
 
-### D5. The checker knows tax forms, not this packet: OPEN
+### D5. The checker knows tax forms, not this packet: LOCKED
 
 Rules refer to form lines and boxes (Sch1.17, W-2 box 16, 1098-C box 4c), document types and printed page text. They never name a packet id (D10, ev-1045, qa-41). A test (`test_rules_do_not_name_packet_ids`) parses every rule file and fails if one does. The tests hold the answer key; the rules do not.
 
-- Why: otherwise the checker is a list of answers and finds nothing on the next client. This is the strongest interview defense of the checker.
-- Tradeoff: some rules read wording on the page ("reported on the Form 1098", "installed", "70%"). Real documents phrase things differently; a production version would extract those cues as fields. Say so on camera.
-- Result: all 16 dollar errors found with the ERRORS.md tax effect to the dollar; net -8,753 federal, -3,317 California, same as ERRORS.md.
+- The packet-id test is the right gate, but it cannot catch an answer key written as page wording ("70%", "installed"). Phrase matching is used only for a cue the pipeline did not extract as a field.
+- On camera: show one rule stated in form language, e.g. R08's "W-2 box 15 says CA while the residency periods say the taxpayer left on 7/14", and say the phrase match is only for a cue the pipeline did not extract.
+- Result: all 16 dollar errors found with the ERRORS.md tax effect to the dollar; net -8,753 federal, -3,317 California.
 
-### D6. Event shape and what is stored vs derived: OPEN
+### D6. Event shape and what is stored vs derived: LOCKED (changed)
 
-One row per act: actor, role, at, action, targets, payload, reason, base_tip. Rules:
+One row per act: actor, role, at, action, targets, payload, reason, base_tip.
 
-- Store what the person did and saw; derive everything computable. An adjustment stores from and to; its tax effect is computed from the version's rates every time.
-- A sign-off stores the version, every covered value and their fingerprint, so the record shows exactly what was signed even if code changes later.
+- An adjustment stores from, to, the version, and the estimated tax effect at that version's rates. Recomputing the effect on every read would let Helen sign "$1,200" and a later replay show a different number. If rates move, the screen shows a fresh estimate beside the stored one (`effect_view`). The $1,000 partner test reads the stored effect.
+- An adjustment's from is the figure on screen after earlier adjustments, not the raw engine value. On replay each adjustment applies only while the current figure still equals its from; otherwise it is stale (a new version changed the line, or an earlier adjustment was undone) and waits for a person.
+- Replay order is the integer id assigned inside the insert transaction. Wall-clock `at` is only for "as of this date"; two events can share a second. The store refuses an `at` earlier than the last one, so "as of a date" is always a prefix of the log.
+- A sign-off stores the version, every covered value and their fingerprint, so the record shows exactly what was signed.
 - Undo is a new event that points at the old one. SQLite triggers refuse UPDATE and DELETE on the events table.
-- An adjustment applies only while the engine value is still the one it was made against. If a new version changes the line, the adjustment goes stale and a person redoes it, rather than silently overriding new engine output.
-- The log must stay in time order, so replay to any date (`as_of`) is meaningful.
 
-### D7. The 409 rule: OPEN
+### D7. The 409 rule: LOCKED (changed)
 
-Guarded acts (sign-off, adjust, verify, accept, disposition, undo, standards) are refused if a newer state-changing event overlaps their scope. Scope = targets plus the work area of any line target. So a sign-off on Business is refused after someone adjusts SchC.9, but not after someone adjusts a payment. Notes, questions and views always append. The partner release is refused after any change at all.
+- Notes, questions, answers, evidence and views append and do not move the conflict tip. A view of an SSN must not block a sign-off.
+- Guarded acts (sign-off, adjust, verify, accept, disposition, undo, standards) are refused if a newer guarded act overlaps their scope.
+- Scope of a line: its area, plus California if it rests on California evidence. Scope of a field: every area that owns its document, plus California only if that field feeds a California figure. California owns no documents. An adjustment to Halvorsen box 16 overlaps wages and California together; verifying box 1 touches only the areas that own the W-2.
+- The partner release is refused only when what it depends on changed since the partner looked: the summary fingerprint (which includes the large adjustments), the set of unsigned areas, or the set of open review notes. Priya verifying a Brightpath lot does not give Helen a 409.
+- The rule needs the packet, so the store is handed a `ConflictRule(packet)` instead of importing one.
 
-### D8. Computed lines belong to the return, not an area: OPEN (refines D3)
+### D8. Computed lines belong to the return; California is a signature over a view: LOCKED (refines D3, resolves its REVISIT)
 
-AMT, NIIT, the QBI limit, credits that phase out with AGI, penalties and amount owed move whenever anything moves. Assigning AMT to wages (because of the ISO) made the corrected Meridian 1099 reopen the wages sign-off. These lines now sit under the partner's signature. Checked against the packet: v1 to v2 reopens only investments; v2 to v3 (the June K-1) reopens passthroughs, payments (extension payment), rentals (passive loss limit) and investments (K-1 interest), and never wages. That matches D3's examples.
+AMT, NIIT, the QBI limit, credits that phase out with AGI, penalties and amount owed move whenever anything moves, so they sit under the partner's signature. Computed California tax and the refund sit there too, in the version summary.
 
-### D9. Findings have stable ids and are answered, not edited: OPEN
+California gets a real preparer tick and a real reviewer tick, and it owns no documents. It is a signature over a view, not a ninth owner of the W-2.
 
-Each finding has an id like `R05:F1040.26`. A person answers it with an adjustment, a disposition or a judgment call that points at the id. The checker reruns on every read: a fixed number makes the finding disappear; a judgment call marks it addressed; undoing the judgment reopens it. Total effect counts each line once (the payments reconciliation and the tax-year conflict both change F540NR.72).
+- The wages area still fingerprints Halvorsen box 1 and box 16 together (F1040.1a and SchCA540NR.1.E), so wages cannot be signed without the state boxes in view. An adjustment to the box 16 figure lifts both signatures.
+- The lens fingerprints the allocation and the California-only figures: the residency dates, the state split of items other areas own (the California lines that rest on California evidence), the Ridgeline state supplement, California depreciation, and the FTB payments, including the September payment tagged as tax year 2024.
+- Fields in the lens are named by what they are ("Meridian Brokerage int_3"), not by which copy they were read from. A corrected 1099 that repeats the same California figure leaves the lens in place.
+- An unsigned lens blocks the partner release, like an unsigned area.
+- Documents belong to the areas whose lines use them. A document that only feeds return-level lines belongs with the same issuer's other documents (the Ridgeline state supplement goes with its K-1, in passthroughs).
 
-### D10. Partner release covers the bottom line plus large adjustments: OPEN
+Checked against the packet:
+- v1 to v2 (corrected Meridian 1099): moves federal gain, so investments reopens (cause D31) and the partner release lifts because the summary moved. The lens stays in place.
+- v2 to v3: passthroughs, payments, rentals, investments and the lens reopen; wages does not. The lens's cause is D38, the Ridgeline state supplement (its California share and SchCA540NR.17.E).
+- Each reopened value names its cause. The extension payment (Sch3.10) names `timeline:extension-2026-04-14`: it shares a version with the K-1 but is not caused by it.
 
-The release fingerprints the version summary plus every adjustment whose estimated effect is over 1,000. A small receipt does not lift it; a large adjustment does (D3 example). Release is blocked by open review notes, unsigned areas, and large adjustments without partner approval.
+### D9. Findings have stable codes and are answered, not edited: LOCKED (with changes)
 
-### D11. Messages never carry full SSNs: OPEN
+- Ids use a stable check code: `ESTIMATES_VS_TRANSCRIPT:F1040.26`. Rule numbers (R01 to R13) are only a display group and may be renumbered without breaking old judgments.
+- The headline tax effect comes from building each corrected line once. Each proposed change names the piece of the line it corrects (a source value, a payment, a lot, a page). Two findings on the same piece share those dollars and count once (both F540NR.72 findings remove the same Sep 15 payment, ev-1075). A second piece on the same line is a real second correction and counts too (phone and internet on SchC.25).
+- A judgment call marks the finding accepted. It stays visible and leaves the tax-effect total. It must record the authority relied on (firm rule); without one it answers nothing.
+- An adjustment or disposition pointing at a finding marks it addressed.
 
-Finding messages show the last four digits. Full numbers live in `details` under keys starting with `ssn`, so step 2's role masking has one place to act. Step 1 exposes no endpoint with findings until masking exists.
+### D10. Partner release covers the bottom line plus large adjustments: LOCKED
+
+The release fingerprints the version summary plus every adjustment whose stored effect is over 1,000. The release event lists the large adjustments it approves, so Helen signs once; they are not separate blockers. A small receipt does not lift the release; a large adjustment does. Release is blocked by open review notes and unsigned areas.
+
+### D11. Sensitive data: LOCKED (changed)
+
+- The leak is the printed page, not just the extracted values: the simulated W-2 prints the full SSN in `printed_content`, and pages carry bank account numbers and the IP PIN.
+- Mask on the way out, server-side, by value_type (ssn, account numbers) and by any SSN-shaped string in any text, including printed pages. To build in step 2.
+- Findings keep the writing rule: messages show the last four digits; full numbers only in `details` under keys starting with `ssn`.
+- An unmasked view is an audit event (`view_sensitive`). Like a note, it does not move the conflict tip.
 
 ## Build plan
 

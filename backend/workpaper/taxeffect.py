@@ -30,10 +30,24 @@ class Effect:
     california: int = 0
     workings: list[str] = field(default_factory=list)  # how the estimate was built, for display
     estimate: bool = True
+    # Unrounded amounts, so several pieces can be added up and rounded once.
+    federal_exact: float = 0.0
+    california_exact: float = 0.0
 
     def as_dict(self) -> dict:
         return {"federal": self.federal, "california": self.california,
                 "workings": self.workings, "estimate": self.estimate}
+
+    @staticmethod
+    def combine(effects: list["Effect"]) -> "Effect | None":
+        """Add pieces exactly, then round once."""
+        effects = [e for e in effects if e is not None]
+        if not effects:
+            return None
+        fed = sum(e.federal_exact for e in effects)
+        ca = sum(e.california_exact for e in effects)
+        return Effect(federal=round_half_up(fed), california=round_half_up(ca),
+                      workings=[w for e in effects for w in e.workings], federal_exact=fed, california_exact=ca)
 
 
 def estimate(rates: dict, federal: list[tuple[str, float]] = (), california: list[tuple[str, float]] = ()) -> Effect:
@@ -53,6 +67,7 @@ def estimate(rates: dict, federal: list[tuple[str, float]] = (), california: lis
         rate = _rate(rates, category, "california_per_dollar")
         ca_total += delta * rate
         eff.workings.append(f"california: {delta:+,.2f} x {category} {rate} = {delta * rate:+,.2f}")
+    eff.federal_exact, eff.california_exact = fed_total, ca_total
     eff.federal = round_half_up(fed_total)
     eff.california = round_half_up(ca_total)
     return eff
@@ -66,6 +81,22 @@ def _rate(rates: dict, category: str, key: str) -> float:
 
 def gain_category(box: str) -> str:
     return "stcg" if box.upper() in SHORT_TERM_BOXES else "ltcg"
+
+
+def direction_for_line(key: str) -> int | None:
+    """+1 if the line is income or a deduction measured the way its rate is, -1 if it is an expense
+    that reduces the income the rate measures (a lower SchC.9 means more profit), None if no dollars."""
+    form, _, rest = key.partition(".")
+    number = int("".join(ch for ch in rest.split(".")[0] if ch.isdigit()) or 0)
+    if form == "SchC":
+        if rest[:1].isalpha() or number in (43, 44):
+            return None              # yes/no questions, dates and miles carry no dollars
+        return -1 if 8 <= number <= 28 or number == 30 else 1
+    if form == "SchE":
+        return -1 if 5 <= number <= 20 else 1
+    if form in ("F4562-C", "F4562-E"):
+        return -1                    # depreciation is an expense
+    return 1
 
 
 def category_for_line(key: str) -> str | None:

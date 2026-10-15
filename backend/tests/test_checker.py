@@ -113,7 +113,7 @@ def test_e16_care_provider_ein_misread(result):
     f = find(result, "R01", "ev-1045")
     assert "74-3829156" in f.message           # what the page prints
     assert "line:F2441.1b" in f.targets        # where the wrong value landed
-    assert result.by_id("R01:F2441.1b:tin").details["on_document"] == ["74-3829156"]  # the form prints it too
+    assert result.by_id("LINE_TIN_NOT_ON_DOCUMENT:F2441.1b").details["on_document"] == ["74-3829156"]  # the form prints it too
 
 
 def test_e17_theo_ssn(result, packet):
@@ -156,7 +156,7 @@ def test_e29_provider_name(result):
 
 
 def test_exactly_eleven_values_are_not_on_their_page(result):
-    off_page = [f for f in result.findings if f.rule == "R01" and f.id.startswith("R01:ev-")]
+    off_page = [f for f in result.findings if f.code == "VALUE_NOT_ON_PAGE"]
     assert len(off_page) == 11
 
 
@@ -195,27 +195,66 @@ def test_the_machine_never_says_verified(result):
 # ---- findings are derived: a person's act changes the next run ------------------
 
 def test_fixing_the_number_clears_the_finding(packet):
-    events = log(ev("adjust", ["line:F1040.26"], payload={"from": 13000, "to": 12000, "finding": "R05:F1040.26"},
-                    reason="Agreed to IRS transcript"))
+    events = log(ev("adjust", ["line:F1040.26"], reason="Agreed to IRS transcript",
+                    payload={"from": 13000, "to": 12000, "finding": "ESTIMATES_VS_TRANSCRIPT:F1040.26"}))
     after = run_checker(packet, project(packet, events))
-    assert after.by_id("R05:F1040.26") is None
-    assert {"check": "R05", "line": "F1040.26", "status": "ties"}.items() <= next(
+    assert after.by_id("ESTIMATES_VS_TRANSCRIPT:F1040.26") is None
+    assert {"check": "ESTIMATES_VS_TRANSCRIPT", "line": "F1040.26", "status": "ties"}.items() <= next(
         r for r in after.reconciliations if r.get("line") == "F1040.26").items()
 
 
 def test_disposition_addresses_the_duplicate(packet):
     events = log(ev("disposition", ["D10"], payload={"disposition": "duplicate", "of": "D09"}, reason="phone photo of D09"))
-    f = run_checker(packet, project(packet, events)).by_id("R02:D10")
+    f = run_checker(packet, project(packet, events)).by_id("DUPLICATE_DOCUMENT:D10")
     assert (f.status, f.addressed_by) == ("addressed", 1)
 
 
-def test_judgment_call_addresses_a_finding_and_undo_reopens_it(packet):
-    judgment = ev("judgment_call", ["finding:R13:msg-07"], payload={"decision": "accept 3,050 basis",
-                  "authority": "Treas. Reg. 1.1012-1"}, reason="bank statement supports the purchase")
-    addressed = run_checker(packet, project(packet, log(judgment))).by_id("R13:msg-07")
-    assert addressed.status == "addressed"
-    undone = run_checker(packet, project(packet, log(judgment, ev("undo", ["event:1"])))).by_id("R13:msg-07")
-    assert undone.status == "open"
+C6 = "EVIDENCE_AFTER_COMPUTATION:msg-07"
+
+
+def _judgment(authority):
+    return ev("judgment_call", [f"finding:{C6}"], reason="the only record is the client's bank statement line",
+              payload={"decision": "keep zero basis", "authority": authority})
+
+
+def test_judgment_call_is_accepted_stays_visible_and_leaves_the_total(packet, result):
+    after = run_checker(packet, project(packet, log(_judgment("Treas. Reg. 1.6001-1(a): records to substantiate basis"))))
+    f = after.by_id(C6)
+    assert (f.status, f.addressed_by) == ("accepted", 1)        # still listed, marked accepted
+    assert C6 not in after.net_effect["findings"]               # its -1,312 / -195 no longer counts
+    assert (after.net_effect["federal"], after.net_effect["california"]) == (-8753 + 1312, -3317 + 195)
+
+
+def test_judgment_call_without_authority_answers_nothing(packet):
+    f = run_checker(packet, project(packet, log(_judgment("")))).by_id(C6)
+    assert f.status == "open"
+    assert f.details["judgment_without_authority"] == 1
+
+
+def test_undoing_a_judgment_reopens_the_finding(packet):
+    events = log(_judgment("Treas. Reg. 1.6001-1(a)"), ev("undo", ["event:1"]))
+    assert run_checker(packet, project(packet, events)).by_id(C6).status == "open"
+
+
+# ---- the headline is built from each corrected line once (D9) ---------------------
+
+def test_ids_use_stable_codes_not_rule_numbers(result):
+    assert result.by_id("ESTIMATES_VS_TRANSCRIPT:F1040.26").rule == "R05"
+    assert not any(re.match(r"R\d\d:", f.id) for f in result.findings)
+
+
+def test_two_findings_on_the_same_payment_count_once(result):
+    line = result.corrected_lines["F540NR.72"]
+    assert (line["original"], line["corrected"]) == (14000, 10500)
+    [piece] = line["pieces"]
+    assert piece["component"] == "ev-1075"   # the Sep 15 payment, found by both checks
+    assert set(piece["found_by"]) == {"ESTIMATES_VS_FTB_ACCOUNT:F540NR.72", "TAX_YEAR_FIELD_CONFLICT:F540NR.72:ev-1076"}
+
+
+def test_two_real_corrections_on_one_line_both_count(result):
+    line = result.corrected_lines["SchC.25"]
+    assert sorted(p["change"] for p in line["pieces"]) == [-660.0, -648.0]   # internet and phone
+    assert line["corrected"] == 2172
 
 
 # ---- the ground rule ------------------------------------------------------------

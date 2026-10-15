@@ -38,7 +38,7 @@ def check(ctx: Context) -> list[Finding]:
         if different:
             docs = sorted({s["doc"] for s in different})
             findings.append(Finding(
-                id=f"R12:{person['id']}", rule="R12", kind=CONFLICT,
+                code="SSN_MISMATCH", subject=person["id"], rule="R12", kind=CONFLICT,
                 title="SSN on the organizer does not match the documents",
                 message=(f"{person['name']}'s SSN on the client organizer ends {organizer[-4:]}; "
                          f"{' and '.join(_describe(ctx, d) for d in docs)} {'print' if len(docs) > 1 else 'prints'} "
@@ -51,7 +51,7 @@ def check(ctx: Context) -> list[Finding]:
             ))
         elif not seen:
             findings.append(Finding(
-                id=f"R12:{person['id']}", rule="R12", kind=OPEN_ITEM,
+                code="SSN_UNSUPPORTED", subject=person["id"], rule="R12", kind=OPEN_ITEM,
                 title="No document supports this SSN",
                 message=(f"{person['name']}'s SSN (ending {organizer[-4:]}) comes only from the client organizer. "
                          f"No document in the packet prints it."),

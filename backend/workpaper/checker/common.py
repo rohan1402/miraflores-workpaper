@@ -29,18 +29,34 @@ PROMPT = "prompt"               # treatment needs a person's call (classificatio
 
 @dataclass
 class Change:
+    """One correction to one piece of a line.
+
+    `component` names the piece being corrected: a source value (ev-1075), a client answer
+    (qa-41), a page (doc:D23#page3), a reference (ref:fx...). Two findings that correct the
+    same component of the same line describe the same dollars and are counted once; a second
+    component on the same line is a second, real correction.
+    `effect` is this piece's estimated tax effect; None for lines that only follow (totals, miles).
+    """
     line: str
     original: object
     proposed: object
+    component: str
+    effect: Effect | None = None
+
+    @property
+    def delta(self) -> float:
+        return (self.proposed or 0) - (self.original or 0)
 
     def as_dict(self) -> dict:
-        return {"line": self.line, "from": self.original, "to": self.proposed}
+        return {"line": self.line, "from": self.original, "to": self.proposed, "component": self.component,
+                "effect": self.effect.as_dict() if self.effect else None}
 
 
 @dataclass
 class Finding:
-    id: str                    # stable, so people can answer it: "<rule>:<subject>"
-    rule: str                  # R01 .. R13
+    code: str                  # stable check code, e.g. ESTIMATES_VS_TRANSCRIPT; never renumbered
+    subject: str               # what it is about, e.g. F1040.26
+    rule: str                  # R01 .. R13: the display group, may be renumbered
     kind: str                  # one of the machine states above
     title: str
     message: str
@@ -48,18 +64,28 @@ class Finding:
     evidence: list[str]        # what proves it: pages, agency records, client answers
     severity: str = "warning"  # error | warning | info
     changes: list[Change] = field(default_factory=list)
-    effect: Effect | None = None
     details: dict = field(default_factory=dict)
-    status: str = "open"       # open | addressed (a person answered it; see addressed_by)
+    status: str = "open"       # open | accepted (judgment call) | addressed (adjustment or disposition)
     addressed_by: int | None = None
+    id: str = field(init=False)
+
+    def __post_init__(self):
+        # Stable, so a person's answer keeps pointing at the same check: "<CODE>:<subject>".
+        self.id = f"{self.code}:{self.subject}"
+
+    @property
+    def effect(self) -> Effect | None:
+        """The finding's estimated effect: its pieces added exactly, rounded once."""
+        return Effect.combine([c.effect for c in self.changes])
 
     def as_dict(self) -> dict:
+        effect = self.effect
         return {
-            "id": self.id, "rule": self.rule, "kind": self.kind, "severity": self.severity,
+            "id": self.id, "code": self.code, "rule": self.rule, "kind": self.kind, "severity": self.severity,
             "title": self.title, "message": self.message,
             "targets": self.targets, "evidence": self.evidence,
             "changes": [c.as_dict() for c in self.changes],
-            "effect": self.effect.as_dict() if self.effect else None,
+            "effect": effect.as_dict() if effect else None,
             "details": self.details, "status": self.status, "addressed_by": self.addressed_by,
         }
 

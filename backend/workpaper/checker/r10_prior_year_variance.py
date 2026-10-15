@@ -55,7 +55,7 @@ def check(ctx: Context) -> list[Finding]:
                     + (f" (as {prior_key})" if prior_key != key else "")
                     + f" to {money(now)} ({pct_text}, {money(change)}).")
         findings.append(Finding(
-            id=f"R10:{key}", rule="R10", kind=VARIANCE,
+            code="PRIOR_YEAR_VARIANCE", subject=key, rule="R10", kind=VARIANCE,
             title="Swing from last year over the firm standard",
             message=f"{key} ({line['label']}) {what}" + (f" Prior-year note: \"{note}\"" if note else ""),
             targets=[f"line:{key}"],

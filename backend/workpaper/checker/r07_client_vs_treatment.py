@@ -66,19 +66,19 @@ def _line_took_client_number(ctx: Context) -> list[Finding]:
             doc_amount = printed[0]["value"] if len(printed) == 1 else None
             quote = snippet(ctx.packet.document_text(doc_id), doc_amount) if doc_amount else ""
             category = category_for_line(key)
-            changes, effect = [], None
+            changes = []
             if doc_amount is not None:
-                changes = [Change(key, value, doc_amount)]
                 delta = doc_amount - value
                 effect = estimate(ctx.rates, federal=[(category, delta)], california=[(category, delta)]) if category else None
+                changes = [Change(key, value, doc_amount, took[0]["id"], effect)]
             findings.append(Finding(
-                id=f"R07:{key}:{took[0]['id']}", rule="R07", kind=CONFLICT,
+                code="CLIENT_FIGURE_VS_DOCUMENT", subject=key, rule="R07", kind=CONFLICT,
                 title="Line uses the client's number; the document prints another",
                 message=(f"{key} ({line['label']}) is {money(value)}, the client's figure in {took[0]['id']} "
                          f"(\"{took[0]['answer']}\"). {doc_id} ({ctx.packet.documents[doc_id]['title']}) prints "
                          + (f"\"{quote}\"." if quote else f"{', '.join(money(ev['value']) for ev in printed)}.")),
                 targets=[f"line:{key}"], evidence=[took[0]["id"], doc_id] + [ev["id"] for ev in printed],
-                severity="error", changes=changes, effect=effect,
+                severity="error", changes=changes,
                 details={"client_figure": value, "document_figures": [ev["value"] for ev in printed]},
             ))
     return findings
@@ -102,14 +102,14 @@ def _eligibility_bars_deduction(ctx: Context) -> list[Finding]:
     effect = estimate(ctx.rates, federal=[("adjustment", -value)], california=[("adjustment", -value)])
     effect.workings.append("Not captured: the QBI deduction also changes with this adjustment.")
     return [Finding(
-        id=f"R07:{key}:eligibility", rule="R07", kind=CONFLICT,
+        code="ANSWER_BARS_DEDUCTION", subject=key, rule="R07", kind=CONFLICT,
         title="Client answer bars a deduction the return takes",
         message=(f"{key} deducts {money(value)} of self-employed health insurance, but {yes[0]['id']} answers "
                  f"\"{yes[0]['answer']}\" to \"{yes[0]['question']}\" Eligibility for an employer plan, "
                  f"including a spouse's, bars the deduction for those months."
                  + (f" The 2024 return did not take it: \"{prior_note}\"" if prior_note else "")),
         targets=[f"line:{key}"], evidence=[a["id"] for a in yes] + ([f"py:/return_2024/notes/{key}"] if prior_note else []),
-        severity="error", changes=[Change(key, value, 0)], effect=effect,
+        severity="error", changes=[Change(key, value, 0, yes[0]["id"], effect)],
     )]
 
 
@@ -196,21 +196,18 @@ def _business_share_finding(ctx: Context, item: dict, disallow: dict, quotes: li
     changes, total = [], 0.0
     for account, d in disallow.items():
         total += d["amount"]
+        effect = estimate(ctx.rates, federal=[("schc_profit", d["amount"])], california=[("schc_profit", d["amount"])])
         for key in ctx.lines_using({d["ev"]}):
             if key.startswith("SchC."):
-                existing = next((c for c in changes if c.line == key), None)
-                if existing:
-                    existing.proposed = round(existing.proposed - d["amount"], 2)
-                else:
-                    changes.append(Change(key, ctx.value(key), round(ctx.value(key) - d["amount"], 2)))
-    effect = estimate(ctx.rates, federal=[("schc_profit", total)], california=[("schc_profit", total)])
+                # One correction per books account: two accounts on one line are two real corrections.
+                changes.append(Change(key, ctx.value(key), round(ctx.value(key) - d["amount"], 2), d["ev"], effect))
     return Finding(
-        id=f"R07:{item['id']}:business_share", rule="R07", kind=CONFLICT,
+        code="CLIENT_BUSINESS_SHARE", subject=item["id"], rule="R07", kind=CONFLICT,
         title="Client says part of a deducted expense is personal",
         message=(f"The books deduct these expenses in full, but {item['id']} says otherwise: " + "; ".join(quotes)
                  + f". Schedule C expenses fall by {money(total)}. Recording the client's estimate is a preparer judgment."),
-        targets=[f"line:{c.line}" for c in changes] + [d["ev"] for d in disallow.values()],
-        evidence=[item["id"]], severity="warning", changes=changes, effect=effect,
+        targets=sorted({f"line:{c.line}" for c in changes}) + [d["ev"] for d in disallow.values()],
+        evidence=[item["id"]], severity="warning", changes=changes,
         details={"disallowed": {k: v["amount"] for k, v in disallow.items()}, "total": total},
     )
 
@@ -242,7 +239,7 @@ def _no_answers_vs_documents(ctx: Context) -> list[Finding]:
             docs = {ev["document_id"] for k in sales for ev in ctx.source_values(ctx.lines[k])} & docs
             if sales:
                 findings.append(Finding(
-                    id=f"R07:{a['id']}", rule="R07", kind=CONFLICT,
+                    code="ANSWER_VS_DOCUMENTS", subject=a["id"], rule="R07", kind=CONFLICT,
                     title="Client answer contradicted by documents",
                     message=(f"{a['id']} answers \"{a['answer']}\" to \"{a['question']}\", but the documents show "
                              f"{len(sales)} sales on Form 8949 ({', '.join(sorted(docs))}). The return follows the "
@@ -268,7 +265,7 @@ def _basis_answers_vs_prior_year(ctx: Context) -> list[Finding]:
             engine = (f"The engine used {money(used)} on F8606.2, which agrees with the documents."
                       if used == carried else f"F8606.2 shows {used}.")
             findings.append(Finding(
-                id=f"R07:{a['id']}", rule="R07", kind=CONFLICT,
+                code="ANSWER_VS_PRIOR_YEAR", subject=a["id"], rule="R07", kind=CONFLICT,
                 title="Client answer contradicted by the prior-year return",
                 message=(f"{a['id']} says \"{a['answer'][:90]}...\", but the 2024 Form 8606 line 14 carries "
                          f"{money(carried)} of basis into 2025. {engine}"),

@@ -1,6 +1,7 @@
 import pytest
 
 from workpaper.checker import run_checker
+from workpaper.concurrency import ConflictRule
 from workpaper.events import Event, EventStore
 from workpaper.packet import load_packet
 from workpaper.project import project
@@ -18,8 +19,8 @@ def result(packet):
 
 
 @pytest.fixture
-def store(tmp_path):
-    s = EventStore(tmp_path / "events.db", attachments_dir=tmp_path / "attachments")
+def store(tmp_path, packet):
+    s = EventStore(tmp_path / "events.db", ConflictRule(packet), attachments_dir=tmp_path / "attachments")
     yield s
     s.close()
 

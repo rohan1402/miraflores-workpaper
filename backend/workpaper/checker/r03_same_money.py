@@ -119,21 +119,21 @@ def contains(ctx: Context, outer_doc: str, inner: Contribution) -> str | None:
 def _finding(ctx: Context, key: str, inner: Contribution, outer: Contribution, why: str) -> Finding:
     docs = ctx.packet.documents
     category = category_for_line(inner.via) or category_for_line(key)
-    if inner.ev:  # the amount is one of the line's own sources: take it out of that line
-        old = ctx.value(key)
-        change = Change(key, old, old - inner.amount)
-    else:         # the amount is a whole input line: that line goes to zero
-        change = Change(inner.via, ctx.value(inner.via), 0)
     effect = estimate(ctx.rates, federal=[(category, -inner.amount)], california=[(category, -inner.amount)]) \
         if category else None
+    if inner.ev:  # the amount is one of the line's own sources: take it out of that line
+        old = ctx.value(key)
+        change = Change(key, old, old - inner.amount, inner.ev, effect)
+    else:         # the amount is a whole input line: that line goes to zero
+        change = Change(inner.via, ctx.value(inner.via), 0, f"line:{inner.via}", effect)
     return Finding(
-        id=f"R03:{inner.via}:{inner.doc}", rule="R03", kind=CONFLICT,
+        code="SAME_MONEY_TWO_SOURCES", subject=f"{inner.via}:{inner.doc}", rule="R03", kind=CONFLICT,
         title="Same money from two documents",
         message=(f"{key} adds {money(inner.amount)} from {inner.doc} ({docs[inner.doc]['title']}) and "
                  f"{money(outer.amount)} from {outer.doc} ({docs[outer.doc]['title']}). {why}"),
         targets=[f"line:{key}"] + ([f"line:{inner.via}"] if inner.via != key else []) + ([inner.ev] if inner.ev else []),
         evidence=[inner.doc, outer.doc],
         severity="error",
-        changes=[change], effect=effect,
+        changes=[change],
         details={"counted_twice": inner.amount, "from": inner.doc, "already_in": outer.doc},
     )

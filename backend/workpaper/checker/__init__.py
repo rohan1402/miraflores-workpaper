@@ -16,7 +16,8 @@ from . import (
     r06_unread_pages, r07_client_vs_treatment, r08_period_conflicts, r09_stale_reference,
     r10_prior_year_variance, r11_classification, r12_identity, r13_newer_evidence,
 )
-from .common import CONFLICT, DISAGREEMENT, Context, Finding
+from ..taxeffect import Effect
+from .common import CONFLICT, DISAGREEMENT, Change, Context, Finding
 
 RULES = {
     "R01": ("Value vs page", r01_value_vs_page.check),
@@ -42,6 +43,7 @@ class CheckResult:
     findings: list[Finding]
     reconciliations: list[dict]          # figures that should agree and do ("ties")
     value_states: dict[str, str]         # ev id -> ties | disagreement | conflict | not_read
+    corrected_lines: dict = field(default_factory=dict)  # line -> original, corrected, the pieces
     net_effect: dict = field(default_factory=dict)
 
     def by_id(self, finding_id: str) -> Finding | None:
@@ -52,6 +54,7 @@ class CheckResult:
             "findings": [f.as_dict() for f in self.findings],
             "reconciliations": self.reconciliations,
             "value_states": self.value_states,
+            "corrected_lines": self.corrected_lines,
             "net_effect": self.net_effect,
         }
 
@@ -63,29 +66,46 @@ def run_checker(packet: Packet, state: State) -> CheckResult:
         findings += check(ctx)
     _mark_answered(findings, state)
     findings.sort(key=lambda f: (SEVERITY_ORDER[f.severity], f.rule, f.id))
+    corrected, net = build_corrections([f for f in findings if f.status == "open"])
     return CheckResult(
         findings=findings,
         reconciliations=ctx.reconciliations,
         value_states=_value_states(ctx, findings),
-        net_effect=net_effect([f for f in findings if f.status == "open"]),
+        corrected_lines=corrected,
+        net_effect=net,
     )
 
 
 def _mark_answered(findings: list[Finding], state: State) -> None:
-    """A finding is addressed when a person's event points at it: an adjustment made for it,
-    a judgment call, a waiver or a note that targets 'finding:<id>'."""
-    answered: dict[str, int] = {}
+    """A person answers a finding by pointing an event at its id.
+
+    - A judgment call that records the authority relied on (firm rule) marks it 'accepted':
+      it stays visible, and its proposed change no longer counts in the tax-effect total.
+      A judgment call without an authority does not answer anything.
+    - An adjustment made for it, or any other act that targets 'finding:<id>', marks it 'addressed'.
+    Rules mark dispositions themselves (a duplicate dispositioned as duplicate is addressed).
+    """
+    answered: dict[str, tuple[str, int]] = {}
+    missing_authority: dict[str, int] = {}
     for e in state.events:
         if e.id in state.undone or e.action in ("undo", "note", "review_note"):
             continue
-        for t in e.targets:
-            if t.startswith("finding:"):
-                answered[t[len("finding:"):]] = e.id
+        refs = [t[len("finding:"):] for t in e.targets if t.startswith("finding:")]
         if e.payload.get("finding"):
-            answered[e.payload["finding"]] = e.id
+            refs.append(e.payload["finding"])
+        for ref in refs:
+            if e.action == "judgment_call":
+                if (e.payload.get("authority") or "").strip():
+                    answered[ref] = ("accepted", e.id)
+                else:
+                    missing_authority[ref] = e.id
+            else:
+                answered[ref] = ("addressed", e.id)
     for f in findings:
         if f.id in answered and f.status == "open":
-            f.status, f.addressed_by = "addressed", answered[f.id]
+            f.status, f.addressed_by = answered[f.id]
+        elif f.id in missing_authority:
+            f.details["judgment_without_authority"] = missing_authority[f.id]
 
 
 def _value_states(ctx: Context, findings: list[Finding]) -> dict[str, str]:
@@ -101,20 +121,43 @@ def _value_states(ctx: Context, findings: list[Finding]) -> dict[str, str]:
     return states
 
 
-def net_effect(findings: list[Finding]) -> dict:
-    """Total estimated effect of the proposed changes. Two findings that change the same
-    line (the payments reconciliation and the tax-year conflict) are counted once."""
-    seen: set[str] = set()
-    federal = california = 0
-    counted = []
+def build_corrections(findings: list[Finding]) -> tuple[dict, dict]:
+    """Build each corrected line once from the open findings, and the headline effect from it.
+
+    A line is corrected piece by piece. Two findings that correct the same piece (the FTB
+    reconciliation and the tax-year conflict both remove the Sep 15 payment from F540NR.72)
+    describe the same dollars, so the piece counts once. A different piece of the same line
+    is a real second correction and counts too. Pieces are added exactly and rounded once.
+    """
+    pieces: dict[tuple[str, str], Change] = {}
+    found_by: dict[tuple[str, str], list[str]] = {}
+    disagreements = []
     for f in findings:
-        if f.effect is None:
-            continue
-        lines = {c.line for c in f.changes}
-        if lines & seen:
-            continue
-        seen |= lines
-        federal += f.effect.federal
-        california += f.effect.california
-        counted.append(f.id)
-    return {"federal": federal, "california": california, "findings": counted, "estimate": True}
+        for c in f.changes:
+            key = (c.line, c.component)
+            if key in pieces:
+                found_by[key].append(f.id)
+                if abs(pieces[key].delta - c.delta) > 0.005:
+                    disagreements.append({"line": c.line, "component": c.component, "findings": list(found_by[key])})
+                continue
+            pieces[key] = c
+            found_by[key] = [f.id]
+
+    corrected: dict[str, dict] = {}
+    for (line, component), c in pieces.items():
+        entry = corrected.setdefault(line, {"original": c.original, "pieces": []})
+        entry["pieces"].append({"component": component, "change": c.delta, "proposed": c.proposed,
+                                "found_by": found_by[(line, component)]})
+    for line, entry in corrected.items():
+        removed = all(p["proposed"] is None for p in entry["pieces"])
+        entry["corrected"] = None if removed else round((entry["original"] or 0) + sum(p["change"] for p in entry["pieces"]), 2)
+
+    total = Effect.combine([c.effect for c in pieces.values()])
+    net = {
+        "federal": total.federal if total else 0,
+        "california": total.california if total else 0,
+        "estimate": True,
+        "findings": sorted({fid for ids in found_by.values() for fid in ids}),
+        "disagreements": disagreements,
+    }
+    return corrected, net

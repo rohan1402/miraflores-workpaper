@@ -48,14 +48,14 @@ def _year_fields(ctx: Context) -> list[Finding]:
             jurisdiction = "california" if line["jurisdiction"] == "california" else "federal"
             effect = estimate(ctx.rates, **{jurisdiction: [(category, -amount["value"])]}) if category else None
             findings.append(Finding(
-                id=f"R08:{key}:{ev['id']}", rule="R08", kind=CONFLICT,
+                code="TAX_YEAR_FIELD_CONFLICT", subject=f"{key}:{ev['id']}", rule="R08", kind=CONFLICT,
                 title="Document says another tax year",
                 message=(f"{key} ({line['label']}) counts the {when['value'] if when else ''} payment of "
                          f"{money(amount['value'])}, but {ev['document_id']} prints it as tax year {ev['value']} "
                          f"(read at {ev['confidence']})."),
                 targets=[f"line:{key}", ev["id"], amount["id"]], evidence=[f"doc:{ev['document_id']}#page{ev['page']}"],
                 severity="error",
-                changes=[Change(key, ctx.value(key), ctx.value(key) - amount["value"])], effect=effect,
+                changes=[Change(key, ctx.value(key), ctx.value(key) - amount["value"], amount["id"], effect)],
                 details={"printed_year": ev["value"], "amount": amount["value"]},
             ))
     return findings
@@ -98,15 +98,15 @@ def _part_year_finding(ctx, doc, box16, fields, page, employer_state, window) ->
     if note:
         said.append(f"The W-2 itself says: \"{note.group(1)}\"")
     evidence = [f"doc:{doc['id']}#page{box16['page']}"]
-    changes, effect = [], None
+    changes = []
 
     stub = _paystub_at_move(ctx, doc, window[1])
     if stub:
         ca_ytd = stub["ev"]["value"]
         drop = box16["value"] - ca_ytd
         old = ctx.value(CA_WAGES_LINE)
-        changes.append(Change(CA_WAGES_LINE, old, old - drop))
         effect = estimate(ctx.rates, california=[("ca_source_income", -drop)])
+        changes.append(Change(CA_WAGES_LINE, old, old - drop, box16["id"], effect))
         evidence.append(stub["ev"]["id"])
         said.append(f"The paystub {stub['doc']} shows California taxable wages {money(ca_ytd)} year to date as of "
                     f"{stub['as_of']}: California-source wages from this employer should be about {money(ca_ytd)}, "
@@ -122,10 +122,10 @@ def _part_year_finding(ctx, doc, box16, fields, page, employer_state, window) ->
     if withheld:
         said.append(f"The {money(withheld['value'])} withheld (box 17) still counts as a California payment.")
     return Finding(
-        id=f"R08:{CA_WAGES_LINE}:{doc['id']}", rule="R08", kind=CONFLICT,
+        code="STATE_WAGES_OUTSIDE_RESIDENCY", subject=doc["id"], rule="R08", kind=CONFLICT,
         title="State wages outside the residency period",
         message=" ".join(said), targets=[f"line:{CA_WAGES_LINE}", box16["id"]], evidence=evidence,
-        severity="error", changes=changes, effect=effect,
+        severity="error", changes=changes,
         details={"employer_state": employer_state, "residency_end": window[1]},
     )
 
@@ -176,27 +176,29 @@ def _closing_proration(ctx: Context) -> list[Finding]:
 def _proration_finding(ctx: Context, closing: dict, credit: dict, address: str, value: float) -> Finding:
     quote = re.search(r"Seller credit[^.]*?: [\d,]+\.\d{2}", ctx.packet.document_text(closing["id"]))
     new_5b = value - credit["value"]
-    changes = [Change(HOME_PROPERTY_TAX_LINE, value, new_5b)]
-    total_line, capped_line = ctx.lines.get("SchA.5d"), ctx.lines.get("SchA.5e")
+    followers = []  # the total and the capped total move with line 5b; they carry no separate effect
     fed_itemized_change = -credit["value"]
-    if total_line and capped_line:
+    if ctx.lines.get("SchA.5d") and ctx.lines.get("SchA.5e"):
         old_total, old_capped = ctx.value("SchA.5d"), ctx.value("SchA.5e")
         new_total = old_total - credit["value"]
         cap = old_capped if old_total > old_capped else None   # the cap for this AGI, when it binds
         new_capped = min(new_total, cap) if cap is not None else new_total
-        changes += [Change("SchA.5d", old_total, new_total), Change("SchA.5e", old_capped, new_capped)]
+        followers = [Change("SchA.5d", old_total, new_total, credit["id"]),
+                     Change("SchA.5e", old_capped, new_capped, credit["id"])]
         fed_itemized_change = new_capped - old_capped
     # Federal: only the part below the SALT cap moves itemized deductions.
     # California: no SALT cap, so the whole credit comes out of California itemized deductions.
     effect = estimate(ctx.rates, federal=[("itemized", fed_itemized_change)],
                       california=[("salt", -credit["value"])])
+    changes = [Change(HOME_PROPERTY_TAX_LINE, value, new_5b, credit["id"], effect)] + followers
     return Finding(
-        id=f"R08:{HOME_PROPERTY_TAX_LINE}:{closing['id']}", rule="R08", kind=CONFLICT,
+        code="CLOSING_PRORATION_NOT_APPLIED", subject=f"{HOME_PROPERTY_TAX_LINE}:{closing['id']}", rule="R08",
+        kind=CONFLICT,
         title="Property tax for a period before the purchase",
         message=(f"{HOME_PROPERTY_TAX_LINE} deducts the full {money(value)} bill for {address}, but the buyer's closing "
                  f"statement {closing['id']} says \"{quote.group(0) if quote else money(credit['value'])}\". The seller "
                  f"paid that part; the buyer's deductible share is {money(new_5b)}."),
         targets=[f"line:{HOME_PROPERTY_TAX_LINE}"], evidence=[closing["id"], credit["id"]],
-        severity="error", changes=changes, effect=effect,
+        severity="error", changes=changes,
         details={"seller_credit": credit["value"], "property": address},
     )

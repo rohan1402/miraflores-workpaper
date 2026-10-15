@@ -66,7 +66,7 @@ def _duplicate(ctx: Context, original: dict, copy: dict, diffs: list) -> Finding
     else:
         engine = "No line uses its values (the engine matched it), but they could still be verified into a second set."
     finding = Finding(
-        id=f"R02:{copy['id']}", rule="R02", kind=OPEN_ITEM,
+        code="DUPLICATE_DOCUMENT", subject=copy["id"], rule="R02", kind=OPEN_ITEM,
         title="Duplicate document",
         message=(f"{copy['id']} ({copy['title']}) carries the same {len(copy_ids) - len(diffs)} of "
                  f"{len(copy_ids)} values as {original['id']}. {engine}"
@@ -89,7 +89,7 @@ def _superseded(ctx: Context, a: dict, b: dict, diffs: list) -> Finding:
     changed = "; ".join(f"{d['field']} {d['old']} to {d['new']}" for d in diffs)
     disp = ctx.state.dispositions.get(old["id"])
     finding = Finding(
-        id=f"R02:{old['id']}", rule="R02", kind=CONFLICT if still_used else OPEN_ITEM,
+        code="SUPERSEDED_DOCUMENT", subject=old["id"], rule="R02", kind=CONFLICT if still_used else OPEN_ITEM,
         title="Superseded by a corrected document",
         message=(f"{new['id']} is marked CORRECTED and replaces {old['id']}. Changed: {changed}. "
                  + (f"The engine switched in {switched}." if switched else "The engine has not switched.")
@@ -125,7 +125,8 @@ def _duplicate_page(ctx: Context, doc: dict, p1: int, p2: int, by_page: dict, si
     """Page p2 repeats page p1. If a line adds a value from each, the second one is counted twice."""
     second_ids = {ev["id"] for ev in by_page[p2]}
     first_ids = {ev["id"] for ev in by_page[p1]}
-    changes, effect, messages = [], None, []
+    page = f"doc:{doc['id']}#page{p2}"  # the component every change here corrects
+    changes, messages = [], []
     for key in ctx.lines_using(second_ids):
         line = ctx.lines[key]
         if not (first_ids & set(line["sources"])):
@@ -134,30 +135,31 @@ def _duplicate_page(ctx: Context, doc: dict, p1: int, p2: int, by_page: dict, si
         overcount = sum(ev["value"] for ev in dup if isinstance(ev["value"], (int, float)))
         old = ctx.value(key)
         new = old - overcount
-        changes.append(Change(key, old, new))
+        changes.append(Change(key, old, new, page))
         messages.append(f"{key} adds both copies: {money(old)} should be {money(new)}.")
-        changes += _rate_lines_downstream(ctx, key, old, new)
+        changes += _rate_lines_downstream(ctx, key, old, new, page)
     if len(changes) > 1:
-        # A downstream line priced at a per-unit rate (standard mileage) is the dollar effect.
+        # A downstream line priced at a per-unit rate (standard mileage) carries the dollar effect.
         dollar = changes[-1]
         expense_drop = dollar.original - dollar.proposed
-        effect = estimate(ctx.rates, federal=[("schc_profit", expense_drop)], california=[("schc_profit", expense_drop)]) \
-            if dollar.line.startswith("SchC.") else None
+        if dollar.line.startswith("SchC."):
+            dollar.effect = estimate(ctx.rates, federal=[("schc_profit", expense_drop)],
+                                     california=[("schc_profit", expense_drop)])
         messages.append(f"{dollar.line} {money(dollar.original)} should be {money(dollar.proposed)}.")
     return Finding(
-        id=f"R02:{doc['id']}#page{p2}", rule="R02", kind=CONFLICT if changes else OPEN_ITEM,
+        code="DUPLICATE_PAGE", subject=f"{doc['id']}#page{p2}", rule="R02", kind=CONFLICT if changes else OPEN_ITEM,
         title="Duplicate page",
         message=(f"{doc['id']} page {p2} carries the same {len(by_page[p2])} values as page {p1} "
                  f"(printed text {similarity:.0%} alike). " + " ".join(messages)).strip(),
         targets=[f"doc:{doc['id']}#page{p2}"] + [f"line:{c.line}" for c in changes],
         evidence=[f"doc:{doc['id']}#page{p1}", f"doc:{doc['id']}#page{p2}"],
         severity="error" if changes else "warning",
-        changes=changes, effect=effect,
+        changes=changes,
         details={"page": p2, "duplicate_of_page": p1, "text_similarity": round(similarity, 3)},
     )
 
 
-def _rate_lines_downstream(ctx: Context, key: str, old: float, new: float) -> list[Change]:
+def _rate_lines_downstream(ctx: Context, key: str, old: float, new: float, component: str) -> list[Change]:
     """Lines computed as this line times an engine rate (e.g. miles x standard mileage rate)."""
     out = []
     for k, line in ctx.lines.items():
@@ -167,5 +169,5 @@ def _rate_lines_downstream(ctx: Context, key: str, old: float, new: float) -> li
             if src.startswith("ref:param."):
                 rate = ctx.packet.resolve(src)
                 if isinstance(rate, (int, float)) and abs(old * rate - ctx.value(k)) <= 1:
-                    out.append(Change(k, ctx.value(k), round(new * rate)))
+                    out.append(Change(k, ctx.value(k), round(new * rate), component))
     return out

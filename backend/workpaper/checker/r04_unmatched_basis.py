@@ -67,17 +67,16 @@ def lot_fields_with_dashes(ctx: Context, doc_id: str) -> dict[str, dict]:
 
 
 def _unmatched(ctx: Context, doc_id: str, lots: list) -> Finding:
-    changes, fed, ca, targets, evidence = [], [], [], [], [doc_id]
+    changes, targets, evidence = [], [], [doc_id]
     lines_text = []
     for key, line, basis_ev, sold_ev, match in lots:
         new_basis = match["basis"]["value"]
         box = key.split(".")[1]
         old = ctx.value(key)
-        changes.append(Change(key, old, round(old - new_basis, 2)))
-        fed.append((gain_category(box), -new_basis))
         ca_cat = ctx.ca_effect_category_for_sale(sold_ev["value"]) if sold_ev else None
-        if ca_cat:
-            ca.append((ca_cat, -new_basis))
+        effect = estimate(ctx.rates, federal=[(gain_category(box), -new_basis)],
+                          california=[(ca_cat, -new_basis)] if ca_cat else [])
+        changes.append(Change(key, old, round(old - new_basis, 2), basis_ev["id"], effect))
         targets += [f"line:{key}", basis_ev["id"]]
         evidence.append(match["basis"]["id"])
         lines_text.append(f"{key.split('.')[-1]} = {match['lot']} {money(new_basis)}")
@@ -86,14 +85,14 @@ def _unmatched(ctx: Context, doc_id: str, lots: list) -> Finding:
         evidence.append(corroboration["ev"])
     total = sum(m["basis"]["value"] for *_, m in lots)
     return Finding(
-        id=f"R04:{doc_id}", rule="R04", kind=CONFLICT,
+        code="SUPPLEMENT_BASIS_UNUSED", subject=doc_id, rule="R04", kind=CONFLICT,
         title="Basis on a supplemental statement was not used",
         message=(f"{len(lots)} lots went to Form 8949 at zero basis, but {doc_id} "
                  f"({ctx.packet.documents[doc_id]['title']}) gives their basis: {'; '.join(lines_text)} "
                  f"(total {money(total)}). The same income is already on the W-2, so it is being taxed twice."
                  + (f" W-2 box 14 RSU {money(corroboration['value'])} agrees." if corroboration else "")),
         targets=targets, evidence=evidence, severity="error",
-        changes=changes, effect=estimate(ctx.rates, federal=fed, california=ca),
+        changes=changes,
         details={"supplement": doc_id, "basis_total": total},
     )
 
@@ -118,7 +117,7 @@ def _acquired(ctx: Context, match: dict) -> str:
 
 def _missing(ctx: Context, key: str, line: dict, basis_ev: dict) -> Finding:
     return Finding(
-        id=f"R04:{key}", rule="R04", kind=OPEN_ITEM,
+        code="SALE_BASIS_MISSING", subject=key, rule="R04", kind=OPEN_ITEM,
         title="Sale with no basis and no supporting document",
         message=(f"{key} ({line['label']}) is taxed at zero basis. "
                  f"{basis_ev['document_id']} reads the basis as {basis_ev['value']!r} "

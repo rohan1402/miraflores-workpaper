@@ -18,8 +18,8 @@ import threading
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Callable
 
-from .concurrency import find_conflict
 
 # Every action the log accepts. project() gives each one its meaning.
 ACTIONS = {
@@ -52,8 +52,8 @@ class Event:
     payload: dict = field(default_factory=dict)
     reason: str | None = None
     base_tip: int = 0               # id of the newest event the actor had seen
-    at: str = ""                    # ISO-8601 UTC; filled by the store if empty
-    id: int = 0                     # log position; assigned by the store
+    at: str = ""                    # ISO-8601 UTC, for "as of this date"; filled by the store if empty
+    id: int = 0                     # log position, assigned in the insert transaction; replay order
 
 
 class StaleTip(Exception):
@@ -102,11 +102,20 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-class EventStore:
-    """SQLite-backed event log. One instance per process; safe to share across threads."""
+# The 409 rule: (new event, events the actor had seen, newer events) -> the event that landed first, or None.
+ConflictRuleFn = Callable[["Event", list["Event"], list["Event"]], "Event | None"]
 
-    def __init__(self, path: Path | str, attachments_dir: Path | str | None = None):
+
+class EventStore:
+    """SQLite-backed event log. One instance per process; safe to share across threads.
+
+    The store does not know the rules. It is given the conflict rule (concurrency.ConflictRule),
+    which needs the packet to know which areas own a document.
+    """
+
+    def __init__(self, path: Path | str, conflict_rule: ConflictRuleFn, attachments_dir: Path | str | None = None):
         self.path = str(path)
+        self.conflict_rule = conflict_rule
         if self.path != ":memory:":
             Path(self.path).parent.mkdir(parents=True, exist_ok=True)
         self._db = sqlite3.connect(self.path, check_same_thread=False, isolation_level=None)
@@ -126,8 +135,12 @@ class EventStore:
         """Append one event inside a transaction and return it with its id.
 
         The 409 rule: if the actor's base_tip is behind the log and a newer event
-        touches the same thing (see concurrency.find_conflict), refuse with StaleTip.
-        Notes and other always-append actions never conflict.
+        touches the same thing (see concurrency.ConflictRule), refuse with StaleTip.
+        Notes and other append-only actions never conflict.
+
+        The id is assigned here, inside the transaction, and is the replay order.
+        `at` must not go backwards, so "as of a date" is always a prefix of the log;
+        two events may share the same second.
         """
         if event.action not in ACTIONS:
             raise ValueError(f"unknown action {event.action!r}")
@@ -138,7 +151,10 @@ class EventStore:
                 if event.base_tip > tip:
                     raise ValueError(f"base_tip {event.base_tip} is ahead of the log tip {tip}")
                 if event.base_tip < tip:
-                    conflict = find_conflict(event, self._rows_after(event.base_tip))
+                    log = self._rows_after(0)
+                    seen = [e for e in log if e.id <= event.base_tip]
+                    newer = [e for e in log if e.id > event.base_tip]
+                    conflict = self.conflict_rule(event, seen, newer)
                     if conflict is not None:
                         raise StaleTip(conflict)
                 at = event.at or utc_now()

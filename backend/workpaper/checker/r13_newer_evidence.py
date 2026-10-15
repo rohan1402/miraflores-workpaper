@@ -45,13 +45,13 @@ def _client_item(ctx: Context, item: dict, computed: str) -> Finding:
     docs = _documents_named(ctx, text)
     people = [p["id"] for p in ctx.packet.people.values() if p["name"].split()[0] in text]
     lines = _lines_from(ctx, docs, text)
-    changes, effect, drafted = [], None, ""
+    changes, drafted = [], ""
     basis = _drafted_basis(ctx, lines, text)
     if basis:
-        changes, effect, drafted = basis
+        changes, drafted = basis
     linked = [f"line:{k}" for k in lines] + docs + [f"household:{p}" for p in people]
     return Finding(
-        id=f"R13:{item['id']}", rule="R13", kind=STALE,
+        code="EVIDENCE_AFTER_COMPUTATION", subject=item["id"], rule="R13", kind=STALE,
         title="Evidence arrived after the return was computed",
         message=(f"{item['id']} ({item['at'][:10]}) arrived after {ctx.version['version']} was computed "
                  f"({computed[:10]}): \"{text}\""
@@ -59,7 +59,7 @@ def _client_item(ctx: Context, item: dict, computed: str) -> Finding:
                  + drafted),
         targets=linked or [item["id"]], evidence=[item["id"]],
         severity="warning" if linked else "info",
-        changes=changes, effect=effect,
+        changes=changes,
         details={"arrived": item["at"], "version_computed": computed},
     )
 
@@ -68,7 +68,7 @@ def _document(ctx: Context, d: dict, computed: str) -> Finding:
     belongs = d["belongs_to"]
     person = belongs.split(":", 1)[1] if belongs.startswith("dependent:") else None
     return Finding(
-        id=f"R13:{d['id']}", rule="R13", kind=STALE,
+        code="EVIDENCE_AFTER_COMPUTATION", subject=d["id"], rule="R13", kind=STALE,
         title="Document arrived after the return was computed",
         message=(f"{d['id']} ({d['title']}) was received {d['received_at'][:10]}, after "
                  f"{ctx.version['version']} was computed ({computed[:10]}). Nothing in the return uses it yet."),
@@ -124,13 +124,14 @@ def _drafted_basis(ctx: Context, lines: list[str], text: str):
     new_gain = round(proceeds - cost, 2)
     old_gain = ctx.value(key)
     new_key = key.replace(f".{box}.", f".{new_box}.")
-    changes = [Change(key, old_gain, None if new_key != key else new_gain)]
-    if new_key != key:
-        changes.append(Change(new_key, None, new_gain))
     fed = [("stcg" if box in "ABCGHI" else "ltcg", -old_gain), ("ltcg" if long_term else "stcg", new_gain)]
     ca_cat = ctx.ca_effect_category_for_sale(sold_ev["value"])
     effect = estimate(ctx.rates, federal=fed, california=[(ca_cat, new_gain - old_gain)] if ca_cat else [])
+    lot = line_sources_by_field(ctx, line, "_basis")["id"]  # the component: this lot's basis
+    changes = [Change(key, old_gain, None if new_key != key else new_gain, lot, effect)]
+    if new_key != key:  # the lot moves to the long-term box; the effect is already on the first change
+        changes.append(Change(new_key, None, new_gain, lot))
     drafted = (f" Draft: basis {money(cost)}, acquired {acquired.isoformat()}, so the sale is "
                f"{'long' if long_term else 'short'}-term with gain {money(new_gain)} instead of {money(old_gain)}. "
                f"The only support named is the client's own record; a person must decide if it is enough.")
-    return changes, effect, drafted
+    return changes, drafted

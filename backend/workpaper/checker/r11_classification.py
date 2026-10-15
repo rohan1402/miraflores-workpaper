@@ -72,7 +72,7 @@ def _improvement(ctx: Context, key: str, line: dict, invoice: dict, total: dict,
                       california=[("ca_source_income" if in_california else "ordinary_income", net_income_change)])
     effect.workings.append("Rental losses are subject to the passive loss limits; the engine would recompute them.")
     return Finding(
-        id=f"R11:{key}:{invoice['id']}", rule="R11", kind=PROMPT,
+        code="REPAIR_LOOKS_LIKE_IMPROVEMENT", subject=f"{key}:{invoice['id']}", rule="R11", kind=PROMPT,
         title="Repair that looks like an improvement",
         message=(f"{key} ({line['label']}) expenses {money(amount)} from {invoice['id']}: \"{text[:200]}\" "
                  f"It is over the {money(DE_MINIMIS_PER_ITEM)} de minimis amount"
@@ -82,7 +82,7 @@ def _improvement(ctx: Context, key: str, line: dict, invoice: dict, total: dict,
                  f"{money(amount)} expense."),
         targets=[f"line:{key}", total["id"]], evidence=[invoice["id"]] + _call_notes_mentioning(ctx, ["hvac", "heat pump", "furnace"]),
         severity="warning",
-        changes=[Change(key, old, old - amount)], effect=effect,
+        changes=[Change(key, old, old - amount, total["id"], effect)],
         details={"amount": amount, "placed_in_service": placed, "first_year_depreciation": first_year},
     )
 
@@ -127,7 +127,7 @@ def _gift_acknowledgments(ctx: Context) -> list[Finding]:
             ev = amounts[0]
             lines = ctx.lines_using({ev["id"]})
             findings.append(Finding(
-                id=f"R11:{ev['id']}:acknowledgment", rule="R11", kind=PROMPT,
+                code="GIFT_WITHOUT_ACKNOWLEDGMENT", subject=ev["id"], rule="R11", kind=PROMPT,
                 title="Gift of 250 or more without a proper acknowledgment",
                 message=(f"{d['id']} page {page['page']} supports a gift of {money(ev['value'])}, but the receipt has no "
                          f"statement that no goods or services were provided: \"{page['printed_content'][:180]}\" "

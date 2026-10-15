@@ -1,9 +1,13 @@
-"""Work areas (D3): the parts of the return that own documents and get signed.
+"""Work areas (D3, D8): the parts of the return that own documents and get signed.
 
-Preparer and reviewer sign each area. California is a lens, not an area: each
-California line belongs to the area that owns the same income or deduction,
-so a California change reopens that area. Lines that only total or compute
-tax belong to the return itself, which the partner signs once.
+Preparer and reviewer sign each area. California is a lens across the areas:
+it covers the California lines that rest on California evidence (a W-2 state box,
+the Ridgeline state supplement, FTB payments, California depreciation). Those
+lines belong to their area AND to the California lens, so a change to them
+reopens both. California lines that only carry or prorate federal numbers follow
+the federal areas, so a corrected federal 1099 does not reopen California.
+Lines that only total or compute tax belong to the return itself, which the
+partner signs once.
 """
 
 from __future__ import annotations
@@ -18,6 +22,10 @@ SIGNED_AREAS: dict[str, str] = {
     "deductions_and_credits": "Deductions and credits",
     "payments": "Payments",
 }
+
+CALIFORNIA = "california"
+# Everything a preparer and reviewer sign: the areas plus the California lens.
+SIGNED_SCOPES: dict[str, str] = {**SIGNED_AREAS, CALIFORNIA: "California"}
 
 RETURN = "return"  # summary and tax computation lines; covered by the partner release
 
@@ -117,5 +125,56 @@ def _matches(key: str, prefix: str) -> bool:
     return not (prefix[-1].isdigit() and rest[:1].isdigit())
 
 
+def in_california_lens(line: dict) -> bool:
+    """A California line that rests on its own evidence: an extracted value or a California asset record."""
+    return line.get("jurisdiction") == "california" and any(
+        s.startswith(("ev-", "asset:")) for s in line.get("sources", []))
+
+
+def scopes_of_line(key: str, line: dict | None) -> set[str]:
+    """Every signed scope a line belongs to: its area, plus California when it rests on California evidence."""
+    scopes = {area_of_line(key)}
+    if line is not None and in_california_lens(line):
+        scopes.add(CALIFORNIA)
+    return scopes
+
+
+def document_owners(packet, lines: dict[str, dict]) -> dict[str, set[str]]:
+    """The work areas that own each document: the areas of the lines built from its values.
+
+    California owns no documents; it is a signature over a view across them. The return
+    (partner level) owns none either. A document whose values only feed return-level lines
+    (the Ridgeline state supplement) belongs with the same issuer's other documents (its K-1).
+    """
+    owners: dict[str, set[str]] = {}
+    for key, line in lines.items():
+        area = area_of_line(key)
+        for s in line["sources"]:
+            if s in packet.values and area in SIGNED_AREAS:
+                owners.setdefault(packet.values[s]["document_id"], set()).add(area)
+    by_issuer: dict[str, set[str]] = {}
+    for doc_id, areas in owners.items():
+        by_issuer.setdefault(_issuer_key(packet.documents[doc_id]["issuer"]), set()).update(areas)
+    for doc_id, doc in packet.documents.items():
+        inherited = by_issuer.get(_issuer_key(doc["issuer"]))
+        if doc_id not in owners and inherited:
+            owners[doc_id] = set(inherited)
+    return owners
+
+
+def _issuer_key(issuer: str) -> str:
+    """'Northlake Bank, N.A.' -> 'northlake bank'; 'Lindqvist Studio (QuickBooks Online)' -> 'lindqvist studio'."""
+    return issuer.split("(")[0].split(",")[0].strip().lower()
+
+
+def california_fields(values: dict[str, dict], lines: dict[str, dict]) -> set[str]:
+    """The extracted values the California lens rests on (Halvorsen box 16, the state supplement's
+    California share, the FTB payment lines). An act on one of these touches the lens."""
+    return {s for line in lines.values() if in_california_lens(line) for s in line["sources"] if s in values}
+
+
 def lines_in_area(lines: dict[str, dict], area: str) -> list[str]:
+    """The lines a sign-off on `area` (a work area, the California lens, or the return) covers."""
+    if area == CALIFORNIA:
+        return sorted(key for key, line in lines.items() if in_california_lens(line))
     return sorted(key for key in lines if area_of_line(key) == area)

@@ -79,7 +79,7 @@ def _summary_vs_lots(ctx: Context, doc: dict) -> dict | None:
 def _not_extracted(ctx: Context, d: dict) -> Finding:
     disp = ctx.state.dispositions.get(d["id"])
     finding = Finding(
-        id=f"R06:{d['id']}", rule="R06", kind=OPEN_ITEM,
+        code="DOCUMENT_NOT_EXTRACTED", subject=d["id"], rule="R06", kind=OPEN_ITEM,
         title="Document not extracted",
         message=(f"{d['id']} ({d['title']}) was not extracted. Pipeline reason: {d['extraction']['reason']} "
                  f"A person must disposition it and record where its content is used."),
@@ -94,7 +94,8 @@ def _not_extracted(ctx: Context, d: dict) -> Finding:
 def _unread_page(ctx: Context, d: dict, page: dict, superseded: bool, gap: dict | None) -> Finding:
     text = page["printed_content"]
     lot = LOT_ON_PAGE.search(text)
-    changes, effect, said = [], None, []
+    changes, said = [], []
+    page_ref = f"doc:{d['id']}#page{page['page']}"
     explains_gap = None
     if lot:
         proceeds = float(lot["proceeds"].replace(",", ""))
@@ -103,10 +104,10 @@ def _unread_page(ctx: Context, d: dict, page: dict, superseded: bool, gap: dict 
         box = {("short", True): "B", ("short", False): "A", ("long", True): "E", ("long", False): "D"}[
             (lot["term"], bool(lot["covered"]))]
         key = f"F8949.{box}.{lot['lot']}"
-        changes.append(Change(key, None, gain))
         ca_cat = ctx.ca_effect_category_for_sale(lot["sold"])
         effect = estimate(ctx.rates, federal=[(gain_category(box), gain)],
                           california=[(ca_cat, gain)] if ca_cat else [])
+        changes.append(Change(key, None, gain, page_ref, effect))
         said.append(f"It prints lot {lot['lot']}: sold {lot['sold']}, proceeds {money(proceeds)}, basis {money(basis)}, "
                     f"{lot['term']}-term, which is missing from Form 8949 ({key}, gain {money(gain)}).")
         if gap and abs(gap["gap"] - proceeds) < 0.01:
@@ -117,14 +118,14 @@ def _unread_page(ctx: Context, d: dict, page: dict, superseded: bool, gap: dict 
         said.append(f"The page prints amounts the return does not use: {', '.join(money(a) for a in sorted(amounts_in(text)))}.")
     disp = ctx.state.dispositions.get(d["id"])
     finding = Finding(
-        id=f"R06:{d['id']}#page{page['page']}", rule="R06", kind=OPEN_ITEM,
+        code="PAGE_NOT_READ", subject=f"{d['id']}#page{page['page']}", rule="R06", kind=OPEN_ITEM,
         title="Page never read",
         message=(f"{d['id']} page {page['page']} was not read by the pipeline. " + " ".join(said)
                  + (" This document is superseded; the same page is unread on the corrected copy." if superseded else "")),
-        targets=[f"doc:{d['id']}#page{page['page']}"] + [f"line:{c.line}" for c in changes],
-        evidence=[f"doc:{d['id']}#page{page['page']}"],
+        targets=[page_ref] + [f"line:{c.line}" for c in changes],
+        evidence=[page_ref],
         severity="info" if superseded else "error",
-        changes=[] if superseded else changes, effect=None if superseded else effect,
+        changes=[] if superseded else changes,
         details={"explains_gap": explains_gap, "superseded": superseded},
     )
     if disp and disp.disposition == "partial" and page["page"] in disp.detail.get("pages", []):
@@ -134,7 +135,7 @@ def _unread_page(ctx: Context, d: dict, page: dict, superseded: bool, gap: dict 
 
 def _unexplained_gap(ctx: Context, doc_id: str, gap: dict) -> Finding:
     return Finding(
-        id=f"R06:{doc_id}:summary", rule="R06", kind=DISAGREEMENT,
+        code="BROKER_SUMMARY_GAP", subject=doc_id, rule="R06", kind=DISAGREEMENT,
         title="Broker lots do not add to the printed summary",
         message=(f"{doc_id} prints summary proceeds {money(gap['summary'])}; its {gap['lots']} lots add to "
                  f"{money(gap['lots_total'])} (gap {money(gap['gap'])})."),

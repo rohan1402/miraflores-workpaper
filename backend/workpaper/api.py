@@ -16,6 +16,7 @@ from pathlib import Path
 from fastapi import FastAPI
 
 from .checker import RULES, run_checker
+from .concurrency import ConflictRule
 from .events import EventStore
 from .packet import PACKET_PATH, REPO_ROOT, load_packet
 from .project import project
@@ -29,7 +30,8 @@ def create_app(packet_path: Path | str = PACKET_PATH, db_path: Path | str | None
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         app.state.packet = load_packet(packet_path)
-        app.state.store = EventStore(db_path, attachments_dir=Path(db_path).parent / "attachments")
+        app.state.store = EventStore(db_path, ConflictRule(app.state.packet),
+                                     attachments_dir=Path(db_path).parent / "attachments")
         yield
         app.state.store.close()
 

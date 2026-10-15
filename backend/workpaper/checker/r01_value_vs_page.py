@@ -49,7 +49,7 @@ def _values_vs_pages(ctx: Context) -> list[Finding]:
             message = (f"{ev['label']} was read as {shown} (confidence {ev['confidence']}), "
                        f"but {shown} does not appear on {ev['document_id']} page {ev['page']}.")
         findings.append(Finding(
-            id=f"R01:{ev['id']}", rule="R01", kind=DISAGREEMENT,
+            code="VALUE_NOT_ON_PAGE", subject=ev["id"], rule="R01", kind=DISAGREEMENT,
             title="Value not on its printed page",
             message=message,
             targets=[ev["id"]] + [f"line:{k}" for k in lines],
@@ -76,7 +76,7 @@ def _line_text_vs_source(ctx: Context) -> list[Finding]:
         for tin in TIN.findall(label):
             if tin not in text:
                 findings.append(Finding(
-                    id=f"R01:{key}:tin", rule="R01", kind=DISAGREEMENT,
+                    code="LINE_TIN_NOT_ON_DOCUMENT", subject=key, rule="R01", kind=DISAGREEMENT,
                     title="Tax ID on the return is not on the document",
                     message=(f"{key} prints tax ID {tin}; {doc_id} prints {', '.join(TIN.findall(text)) or 'none'}."),
                     targets=[f"line:{key}"], evidence=[f"doc:{doc_id}#page1"],
@@ -90,7 +90,7 @@ def _line_text_vs_source(ctx: Context) -> list[Finding]:
                 if isinstance(py_value, str) and issuer_core(doc["issuer"]) in issuer_core(py_value):
                     evidence.append(f"py:/return_2024/lines/{py_key}")
             findings.append(Finding(
-                id=f"R01:{key}:name", rule="R01", kind=DISAGREEMENT,
+                code="LINE_NAME_NOT_ON_DOCUMENT", subject=key, rule="R01", kind=DISAGREEMENT,
                 title="Name on the return is not the name on the document",
                 message=(f"{key} names '{named}', but {doc_id} is from '{doc['issuer']}'."),
                 targets=[f"line:{key}"], evidence=evidence,
