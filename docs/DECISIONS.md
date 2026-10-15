@@ -171,44 +171,42 @@ The release fingerprints the version summary plus every adjustment whose stored 
 - Findings keep the writing rule: messages show the last four digits; full numbers only in `details` under keys starting with `ssn`.
 - An unmasked view is an audit event (`view_sensitive`). Like a note, it does not move the conflict tip.
 
-## Step 2 build decisions (OPEN until Rohan locks them)
+## Step 2 build decisions (LOCKED 2026-10-14, after Rohan's review)
 
-The API, roles, masking and live updates (2026-10-14). Code: `backend/workpaper/api.py`, `roles.py`, `actions.py`, `masking.py`, `views.py`, `live.py`.
+The API, roles, masking and live updates. Code: `backend/workpaper/api.py`, `roles.py`, `actions.py`, `masking.py`, `views.py`, `live.py`. D12, D15, D17 locked as built; D13, D14, D16 locked with Rohan's changes.
 
-### D12. Identity comes from the role switcher: OPEN
+### D12. Identity comes from the role switcher: LOCKED
 
-The switcher sets a cookie (`wp_person`; header `X-Person` also works for tools and tests). There is no real authentication in the prototype. Everything after "who you are" is enforced on the server. A cookie rather than a header because the browser's live-update connection (EventSource) cannot send custom headers.
+The header `X-Person` wins over the cookie; the cookie `wp_person` is HttpOnly and SameSite=Lax. That is what the live stream needs: the browser's EventSource cannot send custom headers, but it sends the cookie. No real authentication in the prototype; everything after "who you are" is enforced on the server.
 
-### D13. Everyone sees masked data; one logged door out: OPEN (implements D11)
+### D13. Everyone sees masked data; one logged door out: LOCKED (changed)
 
-- Every JSON response passes through the masker on its way out (the default response class), so an endpoint cannot forget. The masker builds its list from the packet's own labels (value_type ssn and account_number, PIN fields, the household's SSNs, IP PINs and bank numbers, the e-file signature PINs) and also masks anything SSN-shaped, including text people type into notes.
-- Helen sees masked data too. Unmasked values leave only through `POST /api/unmask`, which needs clearance and appends a `view_sensitive` event first. Marcus gets 403 and nothing is logged.
-- A file cannot be masked, so downloading an attachment counts as an unmasked view: clearance required, and logged. A client can download only what they uploaded.
-- Unmask records are an audit trail, not a change to the workpaper: they stay out of "since I last looked" and the live stream, and appear in the view log (`/api/audit/sensitive-views`, partner and administrator).
-- The log stores what people typed, unmasked. Masking is applied on the way out, never by rewriting the record.
+- Packet pages go out through the masker, so Marcus can still open a W-2 and read it with the SSN masked. The masker builds its list from the packet's own labels (value_type ssn and account_number, PIN fields, the household's SSNs, IP PINs and bank numbers, the e-file signature PINs) and masks anything SSN-shaped, including text people type.
+- Unmasked values leave only through `POST /api/unmask`: clearance required, `view_sensitive` logged first. A 403 writes nothing. The view log stores the field id, not the digits.
+- Opaque uploads cannot be masked, so a staff download goes through the same door: clearance required, logged.
+- Household uploads are visible to both clients: Erik can open what Ngozi uploaded.
+- The log stores what people typed; masking happens on the way out, never by rewriting the record.
 
-### D14. Writes: the browser sends intent, the server computes the rest: OPEN
+### D14. Writes: the browser sends intent, the server computes the rest: LOCKED (changed)
 
-`POST /api/actions` with the action, targets, the person's choice (a new figure, a waiver sentence, a verification type), a reason and the log tip they saw. The server then:
+`POST /api/actions`: 403 if the role may not act; the server computes everything derived (adjustment from and stored effect, sign-off covered values, fingerprint and level); 422 for a broken firm rule; 409 from the store for a stale view.
 
-1. refuses with 403 if the role may not do this at all;
-2. computes everything derived: an adjustment's from and stored effect, a sign-off's covered values and fingerprint and level (from the role, not the browser), the values an acceptance covers;
-3. refuses with 422 if a firm rule is broken: judgment calls need an authority; adjustments need a reason; verification types come from the firm's five; a person may not review work they prepared (including lines they adjusted in that area); the partner release needs no blockers;
-4. appends, or returns 409 with the event that landed first.
+- Signing an area with open error findings needs a waiver sentence (only errors, not warnings).
+- Priya may preparer-sign an area she prepared. Daniel may not reviewer-sign an area where he adjusted a line.
+- The sign-off stores the waiver sentence and the open error findings it signs over, each with its estimated effect at signing. A waived area counts as signed for release.
+- A waived error over $1,000 must reach Helen: the partner release covers and lists the large waived findings (`waivers`), the same way it lists large adjustments (`approves`). A large waiver after Helen looked gives her release a 409; a large waiver after the release reopens it, naming the sign-off as the cause.
 
-New rule to confirm: **signing an area that has open error findings needs a waiver sentence** (D3 allows signed waivers; this makes signing over open items explicit instead of silent).
+### D15. Live updates and "since I last looked": LOCKED
 
-### D15. Live updates and "since I last looked": OPEN
+Server-sent events. The stream does not move last-seen; only `POST /api/seen` does. A reconnecting browser catches up with Last-Event-ID. `view_sensitive` stays out of the stream and out of `/api/since`; it is in the view log (`/api/audit/sensitive-views`, partner and administrator).
 
-Server-sent events. After an append the API publishes the event; each open stream sends it, masked and filtered for that person (clients see questions sent to the client and their own acts; the examiner's view is frozen, so no live events). A reconnecting browser sends Last-Event-ID and gets the missed events from the log first. "Since I last looked" is the log after the person's stored last-seen id, minus their own acts.
+### D16. Reads are cached on the content tip: LOCKED (changed)
 
-### D16. Reads are cached by log tip: OPEN
+One unmasked projection and checker result, masked on the way out. It is keyed on the newest event that is not `view_sensitive` (`EventStore.content_tip`), so an unmask, which is an insert, does not rebuild the return. Any other event does.
 
-project() and the checker are pure, so the server keeps one result and rebuilds it only when the log tip moves. About 0.25 seconds per change; reads are milliseconds.
+### D17. Clients and the examiner: LOCKED
 
-### D17. Clients and the examiner: OPEN
-
-Clients have a separate question surface (`/api/client/questions`, answer, upload) and get 403 on the workpaper. The examiner reads the workpaper masked and can do nothing; freezing it at filing comes in step 5.
+Clients get a 403 from the workpaper routes and have their own question surface (`/api/client/questions`, answer, upload). The examiner reads the current return, masked, and receives no live events. Pinning the examiner's reads to the filing tip is step 5.
 
 ## Build plan
 

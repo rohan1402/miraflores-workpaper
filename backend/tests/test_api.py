@@ -172,6 +172,15 @@ def test_reviewer_may_not_review_what_they_adjusted(client):
     assert r.status_code == 422 and "may not review work they prepared" in r.json()["refused"][0]
 
 
+def test_a_waiver_stores_the_errors_it_signs_over(client):
+    r = act(client, PRIYA, "sign_off", ["area:business"], {"waiver": "Open with Erik; resolving before release."})
+    waived = {w["id"]: (w["federal"], w["california"]) for w in r.json()["event"]["payload"]["waived"]}
+    assert waived == {"DUPLICATE_PAGE:D23#page3": (919, 80),
+                      "SAME_MONEY_TWO_SOURCES:SchC.1:D21": (-4402, -384),
+                      "ANSWER_BARS_DEDUCTION:Sch1.17": (4464, 605)}
+
+
+
 def test_partner_release_is_refused_while_blockers_remain(client):
     r = act(client, HELEN, "partner_release", ["return"])
     assert r.status_code == 422
@@ -247,6 +256,27 @@ def test_attachments_are_stored_by_hash_and_downloads_are_logged(client):
     assert client.get(f"/api/attachments/{digest}", headers=as_(PRIYA)).content.startswith(b"03/15/2021")
     log = client.get("/api/audit/sensitive-views", headers=as_(HELEN)).json()
     assert [e["targets"] for e in log] == [[f"attachment:{digest}"]]
+
+
+def test_household_uploads_are_visible_to_both_clients(client):
+    up = client.post("/api/attachments", headers=as_(NGOZI), data={"targets": "msg-08"},
+                     files={"file": ("receipt.pdf", b"St. Brigid 1,500", "application/pdf")})
+    erik = "cu-02"
+    assert client.get(f"/api/attachments/{up.json()['sha256']}", headers=as_(erik)).status_code == 200
+
+
+# ---- the read cache ---------------------------------------------------------------
+
+def test_an_unmask_does_not_rebuild_the_return(client):
+    snapshots = client.app.state.snapshots
+    client.get("/api/return", headers=as_(PRIYA))
+    builds = snapshots.builds
+    client.post("/api/unmask", headers=as_(PRIYA), json={"ref": "ev-0034"})
+    client.get("/api/return", headers=as_(PRIYA))
+    assert snapshots.builds == builds          # an unmask is an insert, but changes nothing
+    act(client, PRIYA, "note", ["line:F1040.26"], {"text": "transcript pulled"})
+    client.get("/api/return", headers=as_(PRIYA))
+    assert snapshots.builds == builds + 1      # a note is part of the workpaper
 
 
 # ---- live updates -----------------------------------------------------------------

@@ -30,8 +30,8 @@ class Refusal(Exception):
     reasons: list[str]
 
 
-def prepare(packet: Packet, state: State, person: dict, action: str, targets: list[str],
-            payload: dict | None, reason: str | None, base_tip: int) -> Event:
+def prepare(packet: Packet, state: State, result: CheckResult, scopes: ConflictRule, person: dict, action: str,
+            targets: list[str], payload: dict | None, reason: str | None, base_tip: int) -> Event:
     """Build the event the log will store. Raises Refusal(403) if the role may not act at all."""
     if action not in ROLE_ACTIONS.get(person["role"], set()):
         raise Refusal(403, [f"{person['name']} ({person['role']}) may not {action.replace('_', ' ')}"])
@@ -43,7 +43,9 @@ def prepare(packet: Packet, state: State, person: dict, action: str, targets: li
         p = adjustment_payload(state, key, p.get("to"), p.get("finding"))
     elif action == "sign_off":
         area = _one(targets, "area")[len("area:"):]
-        p = signoff_payload(state, area, SIGN_LEVEL[person["role"]], waiver=p.get("waiver"))
+        waiver = (p.get("waiver") or "").strip() or None
+        p = signoff_payload(state, area, SIGN_LEVEL[person["role"]], waiver=waiver,
+                            waived=_waived(result, scopes, area) if waiver else None)
     elif action == "partner_release":
         p = signoff_payload(state, RETURN, "partner", waiver=p.get("waiver"))
     elif action == "accept_document":
@@ -87,8 +89,7 @@ def _sign_off(packet, state, result, scopes, person, e) -> list[str]:
         if own:
             reasons.append(f"You adjusted {', '.join(sorted(own))} in this area; another reviewer must sign "
                            f"(a person may not review work they prepared).")
-    open_errors = [f.id for f in result.findings
-                   if f.status == "open" and f.severity == "error" and f"area:{area}" in scopes.refs_scope(f.targets)]
+    open_errors = [f.id for f in _open_errors(result, scopes, area)]
     if open_errors and not (e.payload.get("waiver") or "").strip():
         reasons.append(f"Open items in this area: {', '.join(open_errors)}. Resolve them or sign with a waiver "
                        f"sentence that says why.")
@@ -208,6 +209,21 @@ CHECKS = {
 
 
 # ---- helpers --------------------------------------------------------------------
+
+def _open_errors(result: CheckResult, scopes: ConflictRule, area: str) -> list:
+    return [f for f in result.findings
+            if f.status == "open" and f.severity == "error" and f"area:{area}" in scopes.refs_scope(f.targets)]
+
+
+def _waived(result: CheckResult, scopes: ConflictRule, area: str) -> list[dict]:
+    """The open errors a waiver signs over, with the estimated effect at the moment of signing."""
+    out = []
+    for f in _open_errors(result, scopes, area):
+        effect = f.effect
+        out.append({"id": f.id, "federal": effect.federal if effect else 0,
+                    "california": effect.california if effect else 0})
+    return out
+
 
 def _one(targets: list[str], kind: str) -> str:
     if len(targets) != 1 or ref_kind(targets[0]) != kind:

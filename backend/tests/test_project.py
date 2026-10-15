@@ -239,6 +239,31 @@ def test_release_lists_and_approves_the_large_adjustments_in_one_act(packet):
     assert signoff_status(released, released.partner_release)["status"] == "signed"
 
 
+WAIVED = [{"id": "ANSWER_BARS_DEDUCTION:Sch1.17", "federal": 4464, "california": 605},
+          {"id": "DUPLICATE_PAGE:D23#page3", "federal": 919, "california": 80}]
+
+
+def test_large_waived_errors_reach_the_partner_release(packet):
+    waiver = ev("sign_off", ["area:business"], payload=signoff_payload(
+        project(packet, []), "business", "preparer", waiver="Open with Erik.", waived=WAIVED))
+    state = project(packet, log(waiver))
+    assert not any("business" in b and "preparer" in b for b in release_blockers(state))  # a waiver counts as signed
+    release = signoff_payload(state, "return", "partner")
+    assert release["waivers"] == ["ANSWER_BARS_DEDUCTION:Sch1.17"]       # only the one over 1,000
+    assert "waived.ANSWER_BARS_DEDUCTION:Sch1.17" in release["covered"]
+
+
+def test_a_large_waiver_after_the_release_reopens_it(packet):
+    release = ev("partner_release", ["return"], actor="st-03", role="partner",
+                 payload=signoff_payload(project(packet, []), "return", "partner"))
+    waiver = ev("sign_off", ["area:business"], payload=signoff_payload(
+        project(packet, []), "business", "preparer", waiver="Open with Erik.", waived=WAIVED))
+    state = project(packet, log(release, waiver))
+    status = signoff_status(state, state.partner_release)
+    assert status["status"] == "reopened"
+    assert status["causes"] == {"event:2": ["waived.ANSWER_BARS_DEDUCTION:Sch1.17"]}
+
+
 def test_partner_threshold_uses_the_stored_effect(packet):
     # Car and truck cut by 3,000 in March: at v1 rates that is +918 federal, under the threshold.
     # At v3 rates the same cut would be +1,065. The stored figure is what was signed, so it decides.

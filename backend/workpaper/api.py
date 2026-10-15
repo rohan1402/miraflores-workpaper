@@ -63,7 +63,11 @@ class UnmaskIn(BaseModel):
 
 
 class Snapshots:
-    """project() and the checker are pure, so their result only changes when the log tip moves."""
+    """project() and the checker are pure, so their result only changes when the workpaper changes.
+
+    One unmasked projection, masked on the way out. It is keyed on the content tip: the newest
+    event that is not an unmask record, so viewing an SSN does not rebuild the return.
+    """
 
     def __init__(self, packet: Packet, store: EventStore):
         self.packet, self.store = packet, store
@@ -71,14 +75,16 @@ class Snapshots:
         self._tip = -1
         self._state: State | None = None
         self._result: CheckResult | None = None
+        self.builds = 0
 
     def get(self) -> tuple[State, CheckResult]:
         with self._lock:
-            tip = self.store.tip()
+            tip = self.store.content_tip()
             if tip != self._tip:
                 self._state = project(self.packet, self.store.all())
                 self._result = run_checker(self.packet, self._state)
                 self._tip = tip
+                self.builds += 1
             return self._state, self._result
 
 
@@ -90,6 +96,7 @@ def create_app(packet_path: Path | str = PACKET_PATH, db_path: Path | str | None
     store = EventStore(db_path, scopes, attachments_dir=db_path.parent / "attachments")
     masker = Masker(packet)
     everyone = people(packet)
+    household_clients = set(packet.client_users)
     live = Broadcaster()
     snapshots = Snapshots(packet, store)
 
@@ -105,6 +112,7 @@ def create_app(packet_path: Path | str = PACKET_PATH, db_path: Path | str | None
         store.close()
 
     app = FastAPI(title="MiraFlores Workpaper", lifespan=lifespan, default_response_class=MaskedJSON)
+    app.state.snapshots = snapshots
 
     @app.exception_handler(HTTPException)
     async def http_error(request: Request, exc: HTTPException):
@@ -248,7 +256,8 @@ def create_app(packet_path: Path | str = PACKET_PATH, db_path: Path | str | None
         if body.action == "view_sensitive":
             raise Refusal(422, ["Unmask through /api/unmask, which logs the view."])
         state, result = snapshots.get()
-        event = prepare(packet, state, person, body.action, body.targets, body.payload, body.reason, body.base_tip)
+        event = prepare(packet, state, result, scopes, person, body.action, body.targets, body.payload, body.reason,
+                        body.base_tip)
         validate(packet, state, result, scopes, person, event)
         try:
             stored = store.append(event)
@@ -282,7 +291,7 @@ def create_app(packet_path: Path | str = PACKET_PATH, db_path: Path | str | None
         data = file.file.read()
         state, result = snapshots.get()
         refs = [t.strip() for t in targets.split(",") if t.strip()]
-        event = prepare(packet, state, person, "attach_evidence", refs, {}, None, base_tip)
+        event = prepare(packet, state, result, scopes, person, "attach_evidence", refs, {}, None, base_tip)
         digest = store.put_attachment(data, file.filename or "upload", file.content_type or "application/octet-stream",
                                       person["id"])
         event = Event(**{**event.__dict__, "payload": {"sha256": digest, "file_name": file.filename,
@@ -299,8 +308,9 @@ def create_app(packet_path: Path | str = PACKET_PATH, db_path: Path | str | None
         if meta is None:
             raise HTTPException(404, "No such attachment.")
         if person["role"] == "client":
-            if meta["stored_by"] != person["id"]:
-                raise HTTPException(403, "Clients can download only what they uploaded.")
+            # One household: what either client uploaded, both clients can open.
+            if meta["stored_by"] not in household_clients:
+                raise HTTPException(403, "Clients can open only what the household uploaded.")
         elif can_unmask(person):
             _log_view(person, f"attachment:{digest}")   # a file cannot be masked: a download is an unmasked view
         else:

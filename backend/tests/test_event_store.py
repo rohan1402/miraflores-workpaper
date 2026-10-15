@@ -130,6 +130,16 @@ def test_partner_release_is_refused_after_a_new_review_note(store):
     assert err.value.conflicting.id == note.id
 
 
+def test_partner_release_is_refused_after_a_large_waiver(store, packet):
+    from workpaper.project import project, signoff_payload
+    waived = [{"id": "ANSWER_BARS_DEDUCTION:Sch1.17", "federal": 4464, "california": 605}]
+    waiver = store.append(ev("sign_off", ["area:business"], payload=signoff_payload(
+        project(packet, []), "business", "preparer", waiver="Open with Erik.", waived=waived)))
+    with pytest.raises(StaleTip) as err:
+        store.append(_release(base_tip=0))   # Helen looked before the waiver landed
+    assert err.value.conflicting.id == waiver.id
+
+
 def test_partner_release_is_refused_after_a_large_adjustment(store, packet):
     from workpaper.project import adjustment_payload, project
     big = store.append(ev("adjust", ["line:Sch1.17"], payload=adjustment_payload(project(packet, []), "Sch1.17", 0)))

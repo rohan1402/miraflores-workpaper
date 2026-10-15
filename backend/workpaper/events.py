@@ -42,6 +42,10 @@ ACTIONS = {
     "view_sensitive",       # someone unmasked sensitive data
 }
 
+# Acts that only record an audit fact. They never change the workpaper, so they do not
+# move the content tip that cached projections are keyed on.
+AUDIT_ONLY = {"view_sensitive"}
+
 
 @dataclass(frozen=True)
 class Event:
@@ -178,6 +182,13 @@ class EventStore:
     def tip(self) -> int:
         with self._lock:
             return self._tip()
+
+    def content_tip(self) -> int:
+        """The newest event that can change the workpaper (an unmask is an insert, but changes nothing)."""
+        marks = ",".join("?" for _ in AUDIT_ONLY)
+        with self._lock:
+            return self._db.execute(f"SELECT COALESCE(MAX(id), 0) FROM events WHERE action NOT IN ({marks})",
+                                    tuple(AUDIT_ONLY)).fetchone()[0]
 
     def all(self) -> list[Event]:
         with self._lock:

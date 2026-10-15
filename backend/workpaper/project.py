@@ -92,7 +92,9 @@ class SignOff(Act):
     covered: dict            # the values signed
     fingerprint: str
     waiver: str | None = None
+    waived: tuple[dict, ...] = ()   # area sign-off: open error findings signed over, with their stored effect
     approves: tuple[int, ...] = ()  # partner release: the large adjustments it approves
+    accepts: tuple[str, ...] = ()   # partner release: the large waived findings it accepts
 
 
 @dataclass
@@ -260,7 +262,7 @@ def _apply_sign_off(state: State, e: Event) -> None:
         state.signoffs.setdefault(area, {})[e.payload["level"]] = SignOff(
             **_act(e), area=area, level=e.payload["level"], version=e.payload["version"],
             covered=e.payload["covered"], fingerprint=e.payload["fingerprint"],
-            waiver=e.payload.get("waiver"),
+            waiver=e.payload.get("waiver"), waived=tuple(e.payload.get("waived", ())),
         )
 
 
@@ -269,7 +271,7 @@ def _apply_partner_release(state: State, e: Event) -> None:
     state.partner_release = SignOff(
         **_act(e), area=RETURN, level="partner", version=e.payload["version"],
         covered=e.payload["covered"], fingerprint=e.payload["fingerprint"],
-        waiver=e.payload.get("waiver"), approves=approves,
+        waiver=e.payload.get("waiver"), approves=approves, accepts=tuple(e.payload.get("waivers", ())),
     )
     for adjustment_id in approves:  # Helen signs once: the release approves the large adjustments it lists
         state.partner_approvals[adjustment_id] = Act(**_act(e))
@@ -366,6 +368,18 @@ def large_adjustments(state: State) -> list[Adjustment]:
     return [a for a in state.applied_adjustments() if needs_partner(a)]
 
 
+def large_waivers(state: State) -> list[dict]:
+    """Open errors signed over with a waiver whose stored effect is over the firm threshold.
+    Like a large adjustment, each one must reach the partner: the release lists it."""
+    found: dict[str, dict] = {}
+    for area, levels in state.signoffs.items():
+        for signoff in levels.values():
+            for w in signoff.waived:
+                if abs(w.get("federal", 0)) > PARTNER_THRESHOLD or abs(w.get("california", 0)) > PARTNER_THRESHOLD:
+                    found.setdefault(w["id"], {**w, "area": area, "signoff_event": signoff.event_id})
+    return [found[k] for k in sorted(found)]
+
+
 # ---- sign-offs: derived, never stored ------------------------------------------
 
 def covered_values(state: State, area: str) -> dict:
@@ -379,6 +393,8 @@ def covered_values(state: State, area: str) -> dict:
         covered = {f"summary.{j}.{k}": v for j, totals in state.version["summary"].items() for k, v in totals.items()}
         for adj in large_adjustments(state):
             covered[f"adjustment.{adj.event_id}"] = {"line": adj.line, "to": adj.value, "effect": adj.effect}
+        for w in large_waivers(state):
+            covered[f"waived.{w['id']}"] = {"area": w["area"], "federal": w["federal"], "california": w["california"]}
         return covered
     covered = {key: state.line_value(key) for key in lines_in_area(state.lines, area)}
     if area == CALIFORNIA:
@@ -413,15 +429,21 @@ def fingerprint(covered: dict) -> str:
     return hashlib.sha256(json.dumps(covered, sort_keys=True, default=str).encode()).hexdigest()
 
 
-def signoff_payload(state: State, area: str, level: str, waiver: str | None = None) -> dict:
+def signoff_payload(state: State, area: str, level: str, waiver: str | None = None,
+                    waived: list[dict] | None = None) -> dict:
     """Build the payload a sign-off event stores: version, the covered values, their fingerprint.
-    A partner release also lists the large adjustments it approves."""
+
+    An area sign-off with a waiver also stores the open error findings it signs over, each with
+    its estimated effect (`waived`). A partner release lists the large adjustments it approves
+    and the large waived findings it accepts, so Helen signs both once."""
     covered = covered_values(state, area)
     payload = {"level": level, "version": state.version_id, "covered": covered, "fingerprint": fingerprint(covered)}
     if area == RETURN:
         payload["approves"] = [a.event_id for a in large_adjustments(state)]
+        payload["waivers"] = [w["id"] for w in large_waivers(state)]
     if waiver:
         payload["waiver"] = waiver
+        payload["waived"] = list(waived or [])
     return payload
 
 
@@ -461,6 +483,9 @@ def _cause_finder(state: State, signoff: SignOff):
     def causes_of(key: str) -> list[str]:
         if key.startswith("adjustment."):
             return [f"event:{key.split('.', 1)[1]}"]
+        if key.startswith("waived."):   # a large waived finding: the sign-off that waived it
+            found = [w for w in large_waivers(state) if w["id"] == key[len("waived."):]]
+            return [f"event:{found[0]['signoff_event']}"] if found else ["recomputed"]
         if key.startswith("field:"):   # a California figure changed, entered or left: the document it sits on
             return _documents_for_field(state, signoff.version, key) or ["recomputed"]
         if key.startswith(("asset:", "household.")):
