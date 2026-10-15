@@ -40,6 +40,20 @@ export function describeEvent(e, names = {}) {
       return `${who} undid ${t}`;
     case "set_standard":
       return `${who} changed the firm standard ${p.path}`;
+    case "correct_identity":
+      return `${who} took ${t.replace("household:", "")}'s SSN from ${p.document}`;
+    case "sign_8879":
+      return `${who} signed the 8879`;
+    case "transmit":
+      return `${who} transmitted the ${p.kind === "amended" ? "amended return" : "return"}`;
+    case "open_amendment":
+      return `${who} opened an amendment`;
+    case "notice_response":
+      return `${who} drafted the answer to notice item ${(p.item ?? 0) + 1}`;
+    case "release_notice_response":
+      return `${who} released the notice response to the examiner`;
+    case "log_time":
+      return `${who} logged ${p.hours} h to ${t.replace("time:", "").replace(/_/g, " ")}`;
     default:
       return `${who}: ${e.action.replace(/_/g, " ")} ${t}`;
   }

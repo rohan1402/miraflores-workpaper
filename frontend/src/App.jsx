@@ -14,6 +14,12 @@ import Findings from "./pages/Findings.jsx";
 import Since from "./pages/Since.jsx";
 import Questions from "./pages/Questions.jsx";
 import Timeline from "./pages/Timeline.jsx";
+import Filing from "./pages/Filing.jsx";
+import YourReturn from "./pages/YourReturn.jsx";
+import Notice from "./pages/Notice.jsx";
+import Examiner from "./pages/Examiner.jsx";
+import Firm from "./pages/Firm.jsx";
+import Search from "./pages/Search.jsx";
 
 export default function App() {
   const route = useRoute();
@@ -79,7 +85,8 @@ export default function App() {
         </div>
       )}
       <div className="body">
-        {surface === "questions" ? null : <Nav route={route} refreshKey={refreshKey} />}
+        {surface === "questions" && <ClientNav route={route} />}
+        {surface === "workpaper" || surface === "standards" ? <Nav route={route} surface={surface} refreshKey={refreshKey} /> : null}
         <main className="main">
           <Page route={route} me={me} names={names} refreshKey={refreshKey} />
         </main>
@@ -98,8 +105,24 @@ export default function App() {
 
 function Page({ route, me, names, refreshKey }) {
   const props = { me, names, refreshKey, params: route.params };
-  if (me.config.surface === "questions") return <Questions {...props} />;
+  // The clients have their own surface; the examiner sees only the released response (D24).
+  if (me.config.surface === "questions") return route.name === "your-return" ? <YourReturn {...props} /> : <Questions {...props} />;
+  if (me.config.surface === "frozen") return <Examiner {...props} />;
   switch (route.name) {
+    case "return":
+      return <Home {...props} />;
+    case "filing":
+      return <Filing {...props} />;
+    case "your-return":
+      return <YourReturn {...props} />;
+    case "notice":
+      return <Notice {...props} />;
+    case "examiner":
+      return <Examiner {...props} />;
+    case "firm":
+      return <Firm {...props} />;
+    case "search":
+      return <Search {...props} />;
     case "area":
       return <Area id={route.id} {...props} />;
     case "line":
@@ -117,12 +140,14 @@ function Page({ route, me, names, refreshKey }) {
     case "timeline":
       return <Timeline {...props} />;
     default:
-      return <Home {...props} />;
+      // The administrator's home is the firm's standards (D1); the return is one click away.
+      return me.config.surface === "standards" ? <Firm {...props} /> : <Home {...props} />;
   }
 }
 
 function TopBar({ me, people, onChoose, live, refreshKey }) {
-  const since = useApi(me.config.surface === "questions" ? null : "/api/since", refreshKey);
+  const staff = !["questions", "frozen"].includes(me.config.surface);
+  const since = useApi(staff ? "/api/since" : null, refreshKey);
   const unseen = since.data?.events.length || 0;
   return (
     <header className="topbar">
@@ -133,7 +158,8 @@ function TopBar({ me, people, onChoose, live, refreshKey }) {
         </span>
       </a>
       <div className="topbar-right">
-        {me.config.surface !== "questions" && (
+        {staff && <SearchBox />}
+        {staff && (
           <a className={`since-link ${unseen ? "has" : ""}`} href={href.since()} title="Changes by others since you last looked">
             Since I last looked {unseen ? <span className="pill">{unseen}</span> : <span className="muted">· nothing new</span>}
           </a>
@@ -144,6 +170,32 @@ function TopBar({ me, people, onChoose, live, refreshKey }) {
         <RoleSwitcher me={me} people={people} onChoose={onChoose} />
       </div>
     </header>
+  );
+}
+
+function SearchBox() {
+  const [q, setQ] = useState("");
+  const go = (e) => {
+    e.preventDefault();
+    if (q.trim().length >= 2) window.location.hash = href.search(q.trim());
+  };
+  return (
+    <form className="searchbox" onSubmit={go} role="search">
+      <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search the file" aria-label="Search the file" />
+    </form>
+  );
+}
+
+function ClientNav({ route }) {
+  return (
+    <nav className="nav client-nav">
+      <a className={route.name !== "your-return" ? "active" : ""} href={href.questions()}>
+        Questions
+      </a>
+      <a className={route.name === "your-return" ? "active" : ""} href={href.yourReturn()}>
+        Your return
+      </a>
+    </nav>
   );
 }
 
@@ -163,13 +215,15 @@ function RoleSwitcher({ me, people, onChoose }) {
   );
 }
 
-function Nav({ route, refreshKey }) {
+function Nav({ route, surface, refreshKey }) {
   const home = useApi("/api/return", refreshKey);
   const areas = home.data?.areas || [];
-  const at = (name, id) => route.name === name && (id === undefined || route.id === id);
+  // The administrator's home is the firm page, so "home" lights up Firm for her.
+  const name = route.name === "home" && surface === "standards" ? "firm" : route.name;
+  const at = (n, id) => name === n && (id === undefined || route.id === id);
   return (
     <nav className="nav">
-      <a className={at("home") ? "active" : ""} href={href.home()}>
+      <a className={at("home") || at("return") ? "active" : ""} href={href.theReturn()}>
         The return
       </a>
       <div className="nav-group">Work areas</div>
@@ -196,6 +250,19 @@ function Nav({ route, refreshKey }) {
       <div className="nav-group">Season</div>
       <a className={at("timeline") ? "active" : ""} href={href.timeline()}>
         Timeline and replay
+      </a>
+      <a className={at("filing") ? "active" : ""} href={href.filing()}>
+        Filing <span className="muted small">{home.data?.filing?.stage}</span>
+      </a>
+      <a className={at("your-return") ? "active" : ""} href={href.yourReturn()}>
+        The clients' page
+      </a>
+      <a className={at("notice") ? "active" : ""} href={href.notice()}>
+        Notices
+      </a>
+      <div className="nav-group">Firm</div>
+      <a className={at("firm") ? "active" : ""} href={href.firm()}>
+        Time, standards, view log
       </a>
     </nav>
   );

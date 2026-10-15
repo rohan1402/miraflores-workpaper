@@ -6,7 +6,8 @@ export const AppContext = createContext({ me: null, names: {}, asOf: null, setAs
 export const useApp = () => useContext(AppContext);
 
 // Reads that can be replayed to a date (?as_of=YYYY-MM-DD). Everything else is always "now".
-const REPLAYABLE = ["/api/return", "/api/areas/", "/api/lines/", "/api/documents", "/api/findings", "/api/history"];
+const REPLAYABLE = ["/api/return", "/api/areas/", "/api/lines/", "/api/documents", "/api/findings", "/api/history",
+  "/api/filing", "/api/search"];
 
 export function withAsOf(path, asOf) {
   if (!path || !asOf || !REPLAYABLE.some((p) => path.startsWith(p))) return path;

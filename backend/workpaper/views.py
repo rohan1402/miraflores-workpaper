@@ -56,8 +56,12 @@ def home(packet: Packet, state: State, result: CheckResult, scopes: ConflictRule
     areas = [scope_summary(state, result, scopes, a, budget.get(a)) for a in home_config(person)["area_order"]]
     areas.append(scope_summary(state, result, scopes, CALIFORNIA, budget.get(CALIFORNIA)))
     open_findings = [f for f in result.findings if f.status == "open"]
+    from .filing import filing_status
+    from .views_filing import stage
+    filing = filing_status(state)
     return {
         "meta": meta(state),
+        "filing": {"stage": stage(filing), "frozen": filing["frozen"], "amendment_open": filing["amendment_open"]},
         "person": {k: person[k] for k in ("id", "name", "role")},
         "verbs": verbs(person),
         "config": home_config(person),
@@ -336,7 +340,7 @@ def document_index(packet: Packet, state: State, result: CheckResult, scopes: Co
     landed = _lines_by_document(state)
     out = []
     for d in packet.raw["documents"]:
-        if state.as_of and d["received_at"] > state.as_of:
+        if not state.document_visible(d):
             continue
         disp = state.dispositions.get(d["id"])
         out.append({
@@ -504,12 +508,38 @@ def history(packet: Packet, state: State, ref: str) -> list[dict]:
     return out
 
 
+# The scripted season's agency answers and the scripted 8879 are not calendar events (D23): the
+# firm's own acts produce them, and the agency answers from the packet.
+ANSWERED_BY_ACTS = {"client_approved_and_signed_8879", "efile_rejected", "efile_accepted_federal",
+                    "efile_accepted_california", "federal_balance_paid", "california_refund_issued"}
+
+
 def timeline(packet: Packet, state: State) -> list[dict]:
-    """The season as the packet scripts it (documents, recomputes, e-file, payments, the 2028 notice),
-    interleaved with every person's act. Replaying to any of these moments is a read with ?as_of."""
+    """The season as the packet scripts it (documents, recomputes, the extension, the 2028 notice),
+    interleaved with every person's act and the agency's answer to each transmission. Replaying to
+    any of these moments is a read with ?as_of."""
+    from .filing import accepted_original, settlement, transmissions
+    accepted = accepted_original(state)
     items = [{"at": t["at"], "kind": "season", "id": t["id"], "event": t["event"], "actor": t["actor"],
-              "detail": t["detail"], "refs": t["refs"]} for t in packet.raw["timeline"]]
+              "detail": t["detail"], "refs": t["refs"]} for t in packet.raw["timeline"]
+             if t["event"] not in ANSWERED_BY_ACTS and (t["event"] != "notice_received" or accepted)]
     items += [{"at": e.at, "kind": "act", "id": f"event:{e.id}", "event": e.action, "actor": e.actor,
                "detail": e.reason, "refs": list(e.targets), "payload": e.payload, "undone": e.id in state.undone}
               for e in state.events if e.action != "view_sensitive"]
+    last_filed = None
+    for t in transmissions(state):
+        federal, california = t.answer["federal"], t.answer["california"]
+        said = f"Federal {federal['status']}"
+        if federal.get("errors"):
+            said += ": " + "; ".join(f"{e['code']} {e['message']}" for e in federal["errors"])
+        said += f". California {california['status'].replace('_', ' ')}."
+        items.append({"at": t.at, "kind": "agency", "id": f"answer:{t.event_id}", "event": "agency_answer",
+                      "actor": None, "detail": said, "refs": [f"event:{t.event_id}"] + [a["ref"] for a in (federal, california)
+                                                                                        if a.get("ref")]})
+        if t.filed:
+            for j, s in settlement(packet, t, last_filed if t.kind == "amended" else None).items():
+                items.append({"at": t.at, "kind": "agency", "id": f"settle:{t.event_id}:{j}", "event": f"{j}_{s['kind']}",
+                              "actor": None, "detail": f"{j.title()} {s['kind']} of {s['amount']:,} (estimate).",
+                              "refs": [f"event:{t.event_id}"]})
+            last_filed = t
     return sorted(items, key=lambda i: i["at"])

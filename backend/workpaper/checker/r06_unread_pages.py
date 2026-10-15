@@ -89,7 +89,7 @@ def _not_extracted(ctx: Context, d: dict) -> Finding:
                  f"A person must disposition it and record where its content is used."),
         targets=[d["id"]], evidence=[f"doc:{d['id']}#page1"], severity="warning",
         details={"reason": d["extraction"]["reason"]},
-        answer={"document": d["id"], "disposition": "not_extracted"},
+        answer={"act": "disposition", "document": d["id"], "disposition": "not_extracted"},
     )
     if disp:
         finding.status, finding.addressed_by = "addressed", disp.event_id
@@ -140,7 +140,7 @@ def _unread_page(ctx: Context, d: dict, page: dict, superseded: bool, gap: dict 
         changes=changes,
         quotes=quote(d["id"], page["page"], lot.group(0)) if lot else [],
         details={"explains_gap": explains_gap, "superseded": superseded},
-        answer={"document": d["id"], "disposition": "partial", "pages": [page["page"]]},
+        answer={"act": "disposition", "document": d["id"], "disposition": "partial", "pages": [page["page"]]},
     )
     named = disp and disp.disposition == "partial" and page["page"] in disp.detail.get("pages", [])
     if named and not finding.changes:

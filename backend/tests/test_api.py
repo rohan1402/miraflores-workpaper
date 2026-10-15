@@ -70,12 +70,20 @@ def test_role_changes_the_default_slice_not_the_home(client):
 
 # ---- masking (D11) ---------------------------------------------------------------
 
-@pytest.mark.parametrize("person", [MARCUS, HELEN, EXAMINER])
+def test_the_examiner_reads_no_workpaper_route(client):
+    # D24: the examiner sees only the released response (test_filing.py sweeps it for SSNs).
+    for url in ["/api/return", "/api/documents", "/api/findings", "/api/events", "/api/filing", "/api/search?q=SSN"]:
+        assert client.get(url, headers=as_(EXAMINER)).status_code == 403, url
+
+
+@pytest.mark.parametrize("person", [MARCUS, HELEN])
 def test_no_screen_leaks_sensitive_data(client, person, packet):
     h = as_(person)
-    pages = ["/api/return", "/api/documents", "/api/findings", "/api/events", "/api/checker/summary"]
+    pages = ["/api/return", "/api/documents", "/api/findings", "/api/events", "/api/checker/summary",
+             "/api/filing", "/api/client/return", "/api/firm/time", "/api/firm/standards", "/api/timeline",
+             "/api/search?q=Theo", "/api/search?q=SSN"]
     pages += [f"/api/areas/{a}" for a in SIGNED_SCOPES]
-    pages += [f"/api/documents/{d}" for d in packet.documents]
+    pages += [f"/api/documents/{d['id']}" for d in client.get("/api/documents", headers=as_(HELEN)).json()]
     if person == MARCUS:
         pages += [f"/api/lines/{k}" for k in packet.lines["v3"]]
     for url in pages:
@@ -340,10 +348,12 @@ def test_replay_reads_the_return_as_it_stood(client):
 def test_timeline_interleaves_the_season_and_peoples_acts(client):
     act(client, PRIYA, "note", ["line:F1040.26"], {"text": "transcript pulled"})
     items = client.get("/api/timeline", headers=as_(DANIEL)).json()
-    assert sum(1 for i in items if i["kind"] == "season") == 29
+    season = [i["event"] for i in items if i["kind"] == "season"]
+    # 29 scripted events, less the 8879, rejection, acceptances, payment and refund the firm's acts now
+    # produce, less the 2028 notice, which arrives only after an acceptance (D23).
+    assert len(season) == 22 and "efile_rejected" not in season and "notice_received" not in season
     assert [i["event"] for i in items if i["kind"] == "act"] == ["note"]
     assert [i["at"] for i in items] == sorted(i["at"] for i in items)
-    assert items[-1]["event"] == "notice_received"   # the 2028 examination letter still comes after today
 
 
 def test_history_of_a_line_marks_what_was_undone(client):
@@ -448,8 +458,9 @@ def test_a_small_acceptance_stays_off_the_release(client):
 
 def test_a_document_finding_says_which_disposition_answers_it(client):
     found = {f["id"]: f for f in client.get("/api/findings", headers=as_(PRIYA)).json()["findings"]}
-    assert found["DUPLICATE_DOCUMENT:D10"]["answer"] == {"document": "D10", "disposition": "duplicate", "of": "D09"}
-    assert found[E15]["answer"] == {"document": "D31", "disposition": "partial", "pages": [32]}
+    assert found["DUPLICATE_DOCUMENT:D10"]["answer"] == {"act": "disposition", "document": "D10",
+                                                          "disposition": "duplicate", "of": "D09"}
+    assert found[E15]["answer"] == {"act": "disposition", "document": "D31", "disposition": "partial", "pages": [32]}
     assert (found[C6]["partner_if_accepted"], found[E15]["partner_if_accepted"]) == (True, False)
 
 

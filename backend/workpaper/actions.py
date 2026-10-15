@@ -13,10 +13,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from . import notices
 from .areas import RETURN, SIGNED_SCOPES
 from .checker import CheckResult
-from .concurrency import ConflictRule
+from .concurrency import GUARDED, ConflictRule
 from .events import Event
+from .filing import filing_status
+from .identity import number_on, ssns_on_return
 from .packet import Packet, ref_kind
 from .project import (
     DISPOSITIONS, State, adjustment_payload, large_adjustments, release_blockers, signoff_payload,
@@ -61,6 +64,25 @@ def prepare(packet: Packet, state: State, result: CheckResult, scopes: ConflictR
              "values": {t: _current_value(packet, state, t) for t in targets}}
     elif action == "judgment_call":
         p["effect"] = _accepted_effect(result, targets, p.get("finding"))
+    elif action == "correct_identity":
+        person_id = _one(targets, "person")[len("household:"):]
+        p = {"person": person_id, "document": p.get("document"), **({"finding": p["finding"]} if p.get("finding") else {})}
+    elif action in ("sign_8879", "transmit"):
+        # What the clients sign and what the agency receives: the return as it stands now, computed here.
+        status = filing_status(state)
+        p = {"presented": status["presented"], "fingerprint": status["fingerprint"]}
+        if action == "transmit":
+            p["kind"] = status["next_kind"]
+    elif action == "open_amendment":
+        filed = filing_status(state)["filed"]
+        p = {"amends": filed.event_id if filed else None}
+    elif action == "notice_response":
+        p = {"item": p.get("item"), "text": (p.get("text") or "").strip()}
+    elif action == "release_notice_response":
+        notice = notices.notice_by_ref(state, _one(targets, "notice"))
+        p = notices.package(packet, state, notice) if notice else {}
+    elif action == "log_time":
+        p = {"hours": p.get("hours"), "on": p.get("on"), "text": (p.get("text") or "").strip()}
     elif action == "undo":
         target = next((e for e in state.events if f"event:{e.id}" == _one(targets, "event")), None)
         p = {"undoes": {"action": target.action, "targets": list(target.targets)} if target else {}}
@@ -71,10 +93,19 @@ def prepare(packet: Packet, state: State, result: CheckResult, scopes: ConflictR
 def validate(packet: Packet, state: State, result: CheckResult, scopes: ConflictRule,
              person: dict, event: Event) -> None:
     """Apply the firm's rules to a prepared event. Raises Refusal(422) with every reason that applies."""
+    if event.action in FROZEN_REFUSES and (status := filing_status(state))["frozen"]:
+        raise Refusal(422, [f"The return was filed (event {status['filed'].event_id}) and is frozen. "
+                            f"Open an amendment to change it."])
     check = CHECKS.get(event.action)
     reasons = check(packet, state, result, scopes, person, event) if check else []
     if reasons:
         raise Refusal(422, reasons)
+
+
+# After filing, nothing that changes the return or its record is accepted until an amendment opens
+# (D25). Notes, questions, answers, evidence, time and the notice response still append; the
+# firm's standards are firm-wide, not this return's.
+FROZEN_REFUSES = (GUARDED | {"judgment_call"}) - {"set_standard", "open_amendment", "release_notice_response"}
 
 
 # ---- one check per action -------------------------------------------------------
@@ -171,6 +202,10 @@ def _undo(packet, state, result, scopes, person, e) -> list[str]:
         return [f"There is no event {target_id}."]
     if target.action == "undo":
         return ["An undo cannot be undone; record the act again instead."]
+    if target.action in ("transmit", "release_notice_response"):
+        return ["That left the firm (the agency or the examiner has it); it cannot be undone."]
+    if target.action == "sign_8879":
+        return ["A client's signature is replaced only by the client signing again."]
     if target_id in state.undone:
         return [f"Event {target_id} is already undone."]
     if target.actor != person["id"] and person["role"] not in ("reviewer", "partner"):
@@ -200,7 +235,86 @@ def _set_standard(packet, state, result, scopes, person, e) -> list[str]:
         if not isinstance(node, dict) or part not in node:
             return [f"There is no firm standard {e.payload.get('path')!r}."]
         node = node[part]
+    value = e.payload.get("value")
+    reasons = [] if e.reason else ["A change to a firm standard needs a reason."]
+    if isinstance(node, (int, float)) and not (isinstance(value, (int, float)) and value >= 0):
+        reasons.append("That standard is a number of zero or more.")
+    elif isinstance(node, list) and not (isinstance(value, list) and value and all(isinstance(v, str) and v.strip() for v in value)):
+        reasons.append("That standard is a list of entries, none of them empty.")
+    elif isinstance(node, str) and not (isinstance(value, str) and value.strip()):
+        reasons.append("That standard is a sentence.")
+    return reasons
+
+
+def _correct_identity(packet, state, result, scopes, person, e) -> list[str]:
+    """Take a person's SSN from a document that prints it (D23). The log keeps the document, not digits."""
+    pid, doc = e.payload["person"], e.payload.get("document")
+    if pid not in packet.people or not packet.people[pid].get("ssn"):
+        return [f"{pid} is not someone on the return."]
+    if doc not in packet.documents or not state.document_visible(packet.documents[doc]):
+        return ["Name a document that has arrived."]
+    number = number_on(packet, pid, doc)
+    if number is None:
+        return [f"{doc} does not print an SSN for {packet.people[pid]['name']}."]
+    if ssns_on_return(state)[pid]["ssn"] == number:
+        return [f"The return already carries the number {doc} prints."]
+    return [] if e.reason else ["Say why the number changes."]
+
+
+def _sign_8879(packet, state, result, scopes, person, e) -> list[str]:
+    status = filing_status(state)
+    if not status["release"]["current"]:
+        return [f"There is nothing to sign yet: {status['release']['why']}"]
+    if status["form_8879"]["signers"][person["id"]]["current"]:
+        return ["You already signed the return as it stands."]
     return []
+
+
+def _transmit(packet, state, result, scopes, person, e) -> list[str]:
+    """Transmit needs the partner release and a current 8879 from both spouses (D23). It does not need
+    the identity finding closed: the agency answers from the digits on the return."""
+    return filing_status(state)["transmit_blockers"]
+
+
+def _open_amendment(packet, state, result, scopes, person, e) -> list[str]:
+    status = filing_status(state)
+    if status["amendment_open"]:
+        return ["An amendment is already open."]
+    if not status["frozen"]:
+        return ["Nothing to amend: the return has not been filed."]
+    return [] if e.reason else ["An amendment needs a reason."]
+
+
+def _notice_response(packet, state, result, scopes, person, e) -> list[str]:
+    notice = notices.notice_by_ref(state, next((t for t in e.targets if t.startswith("notice:")), ""))
+    if notice is None:
+        return ["There is no such notice (a notice about this return arrives only after it was accepted)."]
+    reasons = []
+    if not isinstance(e.payload.get("item"), int) or not 0 <= e.payload["item"] < len(notices.items(notice)):
+        reasons.append("Answer one of the items the notice lists.")
+    if not e.payload.get("text"):
+        reasons.append("Write the answer.")
+    return reasons
+
+
+def _release_notice_response(packet, state, result, scopes, person, e) -> list[str]:
+    notice = notices.notice_by_ref(state, e.targets[0])
+    if notice is None:
+        return ["There is no such notice."]
+    answered = notices.drafts(state, notice["id"])
+    missing = [i + 1 for i in range(len(notices.items(notice))) if i not in answered]
+    return [f"Item {', '.join(map(str, missing))} has no answer yet."] if missing else []
+
+
+def _log_time(packet, state, result, scopes, person, e) -> list[str]:
+    bucket = e.targets[0][len("time:"):] if e.targets and e.targets[0].startswith("time:") else None
+    reasons = []
+    if bucket not in packet.raw["firm"]["budget_hours"]:
+        reasons.append(f"Log time to one of: {', '.join(packet.raw['firm']['budget_hours'])}.")
+    hours = e.payload.get("hours")
+    if not isinstance(hours, (int, float)) or not 0 < hours <= 12:
+        reasons.append("Hours are more than 0 and at most 12 per entry.")
+    return reasons
 
 
 def _disposition(packet, state, result, scopes, person, e) -> list[str]:
@@ -265,6 +379,13 @@ CHECKS = {
     "partner_release": _partner_release,
     "set_standard": _set_standard,
     "disposition": _disposition,
+    "correct_identity": _correct_identity,
+    "sign_8879": _sign_8879,
+    "transmit": _transmit,
+    "open_amendment": _open_amendment,
+    "notice_response": _notice_response,
+    "release_notice_response": _release_notice_response,
+    "log_time": _log_time,
     "note": _note,
     "review_note": _note,
     "question": _question,

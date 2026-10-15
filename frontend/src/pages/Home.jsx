@@ -30,6 +30,17 @@ export default function Home({ me, names, refreshKey }) {
         </div>
       </div>
 
+      {data.filing.frozen && (
+        <div className="callout">
+          <strong>Filed.</strong> The return is frozen; <a href={href.filing()}>open an amendment</a> to change it.
+        </div>
+      )}
+      {data.filing.amendment_open && (
+        <div className="callout warn">
+          <strong>Amendment open.</strong> Changes now build the amended return. <a href={href.filing()}>Filing</a>
+        </div>
+      )}
+
       <Strip rows={strip} />
 
       <div className="home-grid">

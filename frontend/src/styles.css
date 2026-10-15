@@ -416,3 +416,29 @@ th.pick, td.pick { width: 28px; padding-right: 0 !important; }
   position: sticky; top: 52px; z-index: 9; background: #fff7e0; border-bottom: 1px solid #f0d58a; color: #6b4e00;
   padding: 8px 18px; font-size: 13px; display: flex; gap: 12px; align-items: center;
 }
+
+/* ---- step 5: filing, notices, firm, search ---- */
+.stage { display: flex; flex-direction: column; gap: 2px; min-width: 220px; }
+.gate { list-style: none; padding: 0; margin: 0 0 .75rem; }
+.gate li { padding: .25rem 0; }
+.gate li.ok { color: var(--ok); }
+.gate li.todo { color: var(--muted); }
+.gate-mark { display: inline-block; width: 1.2em; font-weight: 600; }
+.transmission { border-left: 3px solid var(--line); }
+.transmission.rejected { border-left-color: var(--bad); }
+.transmission.accepted, .transmission.filed { border-left-color: var(--ok); }
+.agency { margin: .35rem 0; }
+.agency.rejected strong { color: var(--bad); }
+.agency.accepted strong { color: var(--ok); }
+.settlement { margin-top: .35rem; }
+.examined { font-style: italic; }
+.package .evidence { border-top: 1px solid var(--line); padding: .5rem 0; }
+.package .page-text, .page-text { white-space: pre-wrap; background: var(--paper); padding: .5rem; border-radius: 4px; }
+.picks { display: flex; flex-wrap: wrap; gap: .25rem .75rem; }
+.check { display: flex; gap: .4rem; align-items: flex-start; }
+.standard { border-top: 1px solid var(--line); padding: .6rem 0; }
+.searchbox input { width: 200px; padding: .3rem .5rem; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: inherit; }
+.results li { padding: .25rem 0; }
+.client-nav { padding-top: 1rem; }
+tr.total td { font-weight: 600; border-top: 1px solid var(--line); }
+@media (max-width: 720px) { .searchbox input { width: 120px; } }

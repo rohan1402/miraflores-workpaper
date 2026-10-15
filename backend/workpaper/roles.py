@@ -19,15 +19,17 @@ STAFF_ROLES = {"preparer", "reviewer", "partner", "firm_administrator", "quality
 # Which acts each role may record. view_sensitive also needs clearance (see can_unmask).
 ROLE_ACTIONS: dict[str, set[str]] = {
     "preparer": {"disposition", "accept_document", "verify", "adjust", "undo", "note", "question",
-                 "attach_evidence", "judgment_call", "sign_off", "view_sensitive"},
+                 "attach_evidence", "judgment_call", "sign_off", "view_sensitive",
+                 "correct_identity", "transmit", "notice_response", "log_time"},
     "reviewer": {"disposition", "accept_document", "verify", "adjust", "undo", "note", "question",
                  "attach_evidence", "judgment_call", "sign_off", "review_note", "resolve_review_note",
-                 "view_sensitive"},
+                 "view_sensitive", "correct_identity", "transmit", "notice_response", "log_time"},
     "partner": {"adjust", "undo", "note", "question", "attach_evidence", "judgment_call", "review_note",
-                "resolve_review_note", "approve_adjustment", "partner_release", "view_sensitive"},
-    "firm_administrator": {"note", "set_standard", "view_sensitive"},
-    "quality_reviewer": {"note", "review_note", "view_sensitive"},
-    "client": {"answer", "attach_evidence"},
+                "resolve_review_note", "approve_adjustment", "partner_release", "view_sensitive",
+                "transmit", "open_amendment", "notice_response", "release_notice_response", "log_time"},
+    "firm_administrator": {"note", "set_standard", "view_sensitive", "log_time"},
+    "quality_reviewer": {"note", "review_note", "view_sensitive", "log_time"},
+    "client": {"answer", "attach_evidence", "sign_8879"},
     "examiner": set(),
 }
 

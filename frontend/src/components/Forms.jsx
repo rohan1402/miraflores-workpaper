@@ -218,7 +218,8 @@ const DISPOSITIONS = [
 // The disposition the open findings on a document point to, to prefill the form. Each rule says
 // what answers its finding (finding.answer, D19 and D20); the person still chooses and gives the reason.
 export function suggestedDisposition(docId, findings) {
-  const answers = findings.filter((f) => f.status === "open" && f.answer?.document === docId).map((f) => f.answer);
+  const answers = findings.filter((f) => f.status === "open" && f.answer?.act === "disposition" && f.answer.document === docId)
+    .map((f) => f.answer);
   const whole = answers.find((a) => a.disposition !== "partial");
   if (whole) return whole;
   const pages = answers.flatMap((a) => a.pages || []);
@@ -430,6 +431,247 @@ export function AttachForm({ targets, tip, onDone }) {
       <ActError error={error} />
       <Submit busy={busy} disabled={!file} onCancel={onDone}>
         Attach
+      </Submit>
+    </form>
+  );
+}
+
+// ---- filing (D23, D25) ------------------------------------------------------------
+
+// Transmit the return as it stands. The server lists what still blocks it, in its own words.
+export function TransmitForm({ tip, kind, blockers, onDone }) {
+  const { run, busy, error } = useAct();
+  const submit = async (e) => {
+    e.preventDefault();
+    if (await run({ action: "transmit", targets: ["return"], tip })) onDone?.();
+  };
+  return (
+    <form onSubmit={submit}>
+      <p className="small">
+        Sends the {kind === "amended" ? "amended return" : "return"} as the clients signed it. The agency answers from its own
+        records: it reads the SSNs on the return, not the checker's findings.
+      </p>
+      {blockers.length > 0 && (
+        <ul className="small blockers">
+          {blockers.map((b) => (
+            <li key={b}>{b}</li>
+          ))}
+        </ul>
+      )}
+      <ActError error={error} />
+      <Submit busy={busy} disabled={blockers.length > 0} onCancel={onDone}>
+        Transmit
+      </Submit>
+    </form>
+  );
+}
+
+// After filing the return is frozen; amending opens a full second round (D25).
+export function AmendForm({ tip, onDone }) {
+  const { run, busy, error } = useAct();
+  const [reason, setReason] = useState("");
+  const submit = async (e) => {
+    e.preventDefault();
+    if (await run({ action: "open_amendment", targets: ["return"], reason, tip })) onDone?.();
+  };
+  return (
+    <form onSubmit={submit}>
+      <p className="small">
+        Lifts the freeze so the return can be amended on top. The return as filed stays on record. The amendment needs the
+        sign-offs, the partner release and both 8879s again.
+      </p>
+      <Field label="Why amend">
+        <textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)} autoFocus />
+      </Field>
+      <ActError error={error} />
+      <Submit busy={busy} disabled={!reason.trim()} onCancel={onDone}>
+        Open the amendment
+      </Submit>
+    </form>
+  );
+}
+
+// A client signs Form 8879 for the return they were shown. A later change reopens it.
+export function Sign8879Form({ tip, onDone }) {
+  const { run, busy, error } = useAct();
+  const [agreed, setAgreed] = useState(false);
+  const submit = async (e) => {
+    e.preventDefault();
+    if (await run({ action: "sign_8879", targets: ["return"], tip })) onDone?.();
+  };
+  return (
+    <form onSubmit={submit}>
+      <label className="check">
+        <input type="checkbox" checked={agreed} onChange={(e) => setAgreed(e.target.checked)} />
+        <span>
+          I have reviewed this return and I authorize the firm to file it electronically (Forms 8879 and FTB 8879). If the
+          return changes, I will be asked to sign again.
+        </span>
+      </label>
+      <ActError error={error} />
+      <Submit busy={busy} disabled={!agreed} onCancel={onDone}>
+        Sign the 8879
+      </Submit>
+    </form>
+  );
+}
+
+// Take a person's SSN from a document that prints it. The record names the document, not the digits.
+export function CorrectIdentityForm({ person, documents, finding, tip, onDone }) {
+  const { run, busy, error } = useAct();
+  const [doc, setDoc] = useState(documents[0]);
+  const [reason, setReason] = useState("");
+  const submit = async (e) => {
+    e.preventDefault();
+    const payload = { document: doc, ...(finding ? { finding } : {}) };
+    if (await run({ action: "correct_identity", targets: [`household:${person}`], payload, reason, tip })) onDone?.();
+  };
+  return (
+    <form onSubmit={submit}>
+      <Field label="Use the number printed on" hint="The return will carry that document's number; the record keeps which document.">
+        <select value={doc} onChange={(e) => setDoc(e.target.value)}>
+          {documents.map((d) => (
+            <option key={d} value={d}>
+              {d}
+            </option>
+          ))}
+        </select>
+      </Field>
+      <Field label="Why">
+        <textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)} />
+      </Field>
+      <ActError error={error} />
+      <Submit busy={busy} disabled={!reason.trim()} onCancel={onDone}>
+        Correct the number
+      </Submit>
+    </form>
+  );
+}
+
+// ---- the notice (D24) -----------------------------------------------------------------
+
+// The firm's answer to one item, and the evidence it rests on. Saving again replaces the draft.
+export function NoticeResponseForm({ notice, item, tip, onDone }) {
+  const { run, busy, error } = useAct();
+  const offered = [...new Set([...(item.draft?.evidence || []), ...item.suggested])];
+  const [text, setText] = useState(item.draft?.text || "");
+  const [picked, setPicked] = useState(new Set(item.draft?.evidence || item.suggested));
+  const toggle = (ref) => setPicked((s) => {
+    const next = new Set(s);
+    next.has(ref) ? next.delete(ref) : next.add(ref);
+    return next;
+  });
+  const submit = async (e) => {
+    e.preventDefault();
+    const targets = [notice.ref, ...offered.filter((r) => picked.has(r))];
+    if (await run({ action: "notice_response", targets, payload: { item: item.item, text }, tip })) onDone?.();
+  };
+  return (
+    <form onSubmit={submit}>
+      <Field label="Our answer">
+        <textarea rows={4} value={text} onChange={(e) => setText(e.target.value)} autoFocus />
+      </Field>
+      <div className="field-row">
+        <span className="field-label">Evidence to send (suggested from the item's words)</span>
+        <div className="picks">
+          {offered.map((r) => (
+            <label key={r} className="check">
+              <input type="checkbox" checked={picked.has(r)} onChange={() => toggle(r)} /> <code>{r}</code>
+            </label>
+          ))}
+        </div>
+      </div>
+      <ActError error={error} />
+      <Submit busy={busy} disabled={!text.trim()} onCancel={onDone}>
+        Save the answer
+      </Submit>
+    </form>
+  );
+}
+
+export function ReleaseNoticeForm({ notice, tip, onDone }) {
+  const { run, busy, error } = useAct();
+  const submit = async (e) => {
+    e.preventDefault();
+    if (await run({ action: "release_notice_response", targets: [notice.ref], tip })) onDone?.();
+  };
+  return (
+    <form onSubmit={submit}>
+      <p className="small">
+        The examiner will see exactly this package, resolved against the return as filed, masked. Review notes and internal
+        findings never leave. Once released it cannot be taken back.
+      </p>
+      <ActError error={error} />
+      <Submit busy={busy} onCancel={onDone}>
+        Release to the examiner
+      </Submit>
+    </form>
+  );
+}
+
+// ---- the firm -------------------------------------------------------------------------
+
+export function LogTimeForm({ buckets, tip, onDone }) {
+  const { run, busy, error } = useAct();
+  const [bucket, setBucket] = useState(buckets[0]);
+  const [hours, setHours] = useState("");
+  const [text, setText] = useState("");
+  const submit = async (e) => {
+    e.preventDefault();
+    if (await run({ action: "log_time", targets: [`time:${bucket}`], payload: { hours: Number(hours), text }, tip })) onDone?.();
+  };
+  return (
+    <form onSubmit={submit}>
+      <Field label="Against">
+        <select value={bucket} onChange={(e) => setBucket(e.target.value)}>
+          {buckets.map((b) => (
+            <option key={b} value={b}>
+              {b.replace(/_/g, " ")}
+            </option>
+          ))}
+        </select>
+      </Field>
+      <Field label="Hours">
+        <input type="number" step="0.25" min="0.25" max="12" value={hours} onChange={(e) => setHours(e.target.value)} />
+      </Field>
+      <Field label="What you did">
+        <input value={text} onChange={(e) => setText(e.target.value)} />
+      </Field>
+      <ActError error={error} />
+      <Submit busy={busy} disabled={!hours} onCancel={onDone}>
+        Log time
+      </Submit>
+    </form>
+  );
+}
+
+// Change one firm standard. Numbers stay numbers; lists are one entry per line.
+export function StandardForm({ path, current, tip, onDone }) {
+  const { run, busy, error } = useAct();
+  const isList = Array.isArray(current);
+  const isNumber = typeof current === "number";
+  const [value, setValue] = useState(isList ? current.join("\n") : String(current));
+  const [reason, setReason] = useState("");
+  const submit = async (e) => {
+    e.preventDefault();
+    const parsed = isList ? value.split("\n").map((v) => v.trim()).filter(Boolean) : isNumber ? Number(value) : value;
+    if (await run({ action: "set_standard", targets: [], payload: { path, value: parsed }, reason, tip })) onDone?.();
+  };
+  return (
+    <form onSubmit={submit}>
+      <Field label={path.replace(/_/g, " ")} hint={isList ? "One entry per line." : undefined}>
+        {isList ? (
+          <textarea rows={Math.min(10, current.length + 1)} value={value} onChange={(e) => setValue(e.target.value)} />
+        ) : (
+          <input type={isNumber ? "number" : "text"} value={value} onChange={(e) => setValue(e.target.value)} />
+        )}
+      </Field>
+      <Field label="Why">
+        <textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)} />
+      </Field>
+      <ActError error={error} />
+      <Submit busy={busy} disabled={!reason.trim()} onCancel={onDone}>
+        Change the standard
       </Submit>
     </form>
   );

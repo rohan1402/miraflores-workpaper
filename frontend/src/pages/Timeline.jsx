@@ -51,12 +51,15 @@ export default function Timeline({ names, refreshKey }) {
           return (
             <li key={item.id} className={`${item.kind} ${here ? "here" : ""} ${item.undone ? "undone" : ""}`}>
               <span className="muted small">
-                {item.kind === "act" ? dateTime(item.at) : date(item.at)}
+                {item.kind === "season" ? date(item.at) : dateTime(item.at)}
                 {item.kind === "act" && <span className="tag">act</span>}
+                {item.kind === "agency" && <span className="tag">agency</span>}
               </span>
               <span>
                 {item.kind === "season" ? (
                   <strong>{SEASON_LABEL[item.event] || item.event}</strong>
+                ) : item.kind === "agency" ? (
+                  <strong>{item.event === "agency_answer" ? "The agency answered" : item.event.replace(/_/g, " ")}</strong>
                 ) : (
                   describeEvent({ ...item, action: item.event, targets: item.refs }, names)
                 )}

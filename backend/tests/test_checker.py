@@ -148,8 +148,9 @@ def test_e16_care_provider_ein_misread(result):
 
 def test_e17_theo_ssn(result, packet):
     f = find(result, "R12", "household:theo")
-    assert {"doc:D71#page1", "doc:D06#page1", "agency:/efile/0"} <= set(f.evidence)
+    assert set(f.evidence) == {"doc:D71#page1", "doc:D06#page1"}   # no rejection yet: nobody transmitted (D23)
     assert "666-74" not in f.message  # messages show only the last four digits
+    assert f.answer == {"act": "correct_identity", "person": "theo", "documents": ["D06", "D71"]}
 
 
 def test_e17_was_catchable_before_the_efile_rejection(packet):
@@ -198,8 +199,9 @@ def test_client_answers_contradicted(result, answer, expect):
 
 
 def test_documents_without_extraction_need_a_disposition(result):
-    for doc in ("D07", "D69", "D70", "D72"):
+    for doc in ("D07", "D69", "D70"):   # D72, the 2028 Letter 566, arrives only after an acceptance (D23)
         assert find(result, "R06", doc).kind == "open_item"
+    assert not [f for f in result.findings if "D72" in f.targets]
 
 
 def test_variances_over_the_firm_standard(result):

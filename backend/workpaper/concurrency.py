@@ -31,11 +31,12 @@ if TYPE_CHECKING:
 
 # Acts that only add to the record.
 APPEND_ONLY = {"note", "question", "answer", "attach_evidence", "view_sensitive",
-               "review_note", "resolve_review_note", "judgment_call"}
+               "review_note", "resolve_review_note", "judgment_call", "notice_response", "log_time"}
 
 # Acts refused if made against a stale view; also the acts that make others' views stale.
 GUARDED = {"sign_off", "partner_release", "approve_adjustment", "adjust", "undo",
-           "accept_document", "verify", "disposition", "set_standard"}
+           "accept_document", "verify", "disposition", "set_standard",
+           "correct_identity", "sign_8879", "transmit", "open_amendment", "release_notice_response"}
 
 
 class ConflictRule:
@@ -53,6 +54,11 @@ class ConflictRule:
             return None
         if new.action == "partner_release":
             return self._release_conflict(seen, newer)
+        if new.action == "sign_8879":
+            return self._presented_conflict(seen, newer)
+        if new.action == "release_notice_response":
+            # The partner releases what she read: a newer draft of any item means she has not read it.
+            return next((e for e in newer if e.action == "notice_response"), None)
         mine = self.scope(new)
         return next((e for e in newer if e.action in GUARDED and self.scope(e) & mine), None)
 
@@ -89,6 +95,10 @@ class ConflictRule:
         doc, page = parse_page_ref(ref) if kind == "page" else (ref, None)
         return doc, {ev["id"] for ev in self.packet.values_by_doc.get(doc, []) if page is None or ev["page"] == page}
 
+    def _presented_conflict(self, seen: list["Event"], newer: list["Event"]) -> "Event | None":
+        """A client signs the return they were shown. If it changed since, refuse (D23)."""
+        return _changes_presented(self.packet, seen, newer)
+
     def _release_conflict(self, seen: list["Event"], newer: list["Event"]) -> "Event | None":
         from .project import project  # imported here: project imports events, events receives this rule
         before = release_view(project(self.packet, seen))
@@ -102,6 +112,20 @@ class ConflictRule:
             if release_view(project(self.packet, log)) != before:
                 return e
         return None
+
+
+def _changes_presented(packet: Packet, seen: list["Event"], newer: list["Event"]) -> "Event | None":
+    from .filing import presented_return
+    from .project import fingerprint, project
+    before = fingerprint(presented_return(project(packet, seen)))
+    log = list(seen)
+    for e in newer:
+        log.append(e)
+        if e.action in APPEND_ONLY:
+            continue
+        if fingerprint(presented_return(project(packet, log))) != before:
+            return e
+    return None
 
 
 def release_view(state) -> tuple:

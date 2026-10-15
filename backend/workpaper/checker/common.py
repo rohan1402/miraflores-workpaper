@@ -127,7 +127,7 @@ class Context:
         return self.state.as_of is None or (at is not None and at <= self.state.as_of)
 
     def documents(self) -> list[dict]:
-        return [d for d in self.packet.raw["documents"] if self.visible(d["received_at"])]
+        return [d for d in self.packet.raw["documents"] if self.state.document_visible(d)]
 
     def source_values(self, line: dict) -> list[dict]:
         return [self.packet.values[s] for s in line["sources"] if s in self.packet.values]

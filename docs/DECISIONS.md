@@ -245,6 +245,61 @@ Lines can be selected in an area and verified in one act; accepting a document v
 
 Every read takes `?as_of=YYYY-MM-DD`, meaning the end of that day: the version, documents, agency records and people's acts as they stood then. The screen says it is replaying and offers no acts; writes take no `as_of` and always act on the current log. Unmask stays available during replay, and the view is logged as of today. The timeline interleaves the packet's scripted season with people's acts; any entry can be replayed to.
 
+## Step 5 build decisions (2026-10-15; Rohan's answers LOCKED, implementation OPEN until he reviews)
+
+Filing and firm. Rohan answered four questions before the build; those answers are recorded here as his and are LOCKED. How they are built is OPEN until his review.
+
+### D23. Acts drive filing; the packet supplies only the agency's answers: LOCKED (Rohan)
+
+- Helen releases the return, both clients sign the 8879, then someone transmits. A pure Python function reads the transmitted return and answers from `tax_agency_records.efile`.
+- If Theo's SSN on the transmitted return is still the organizer's number (ending 3309), the federal answer is the packet's rejection R0000-504-02, and California is held, not transmitted. If it is the number on last year's return (ending 3390), the answer is the packet's acceptance. California is transmitted only after the federal return is accepted. There is no other rejection.
+- The agency sees the digits on the return, not the checker's status: leaving the finding open, or accepting it without changing the number, produces the rejection. The Social Security card (D71) arrives the evening of July 13, after the scripted rejection; the January return (D06) already prints the right number, so a transmission in March can be accepted before the card exists.
+- The scripted rejection, acceptance, payment and refund are not also events on the calendar. Documents still arrive on their dates, including the card on July 13. The 2028 notice stays on January 26, 2028 and appears only after an acceptance. The payment or refund uses the balance of the return that was accepted: if the corrections turn the federal balance into a refund, the July 20 payment does not play.
+- An 8879 signs the return that was presented. A change after the signature, including the SSN, reopens it. Transmit needs a current 8879 and the partner release. It does not need the identity finding closed, or the rejection could never be shown.
+- Claude's reading, for Rohan to confirm: the scripted 8879 (tl-20) also leaves the calendar, since the signature is now the clients' act (msg-09 still arrives as a message); and the Letter 566 document (D72) is part of the notice, so it too appears only after an acceptance.
+
+### D24. The examiner sees only the released response: LOCKED (Rohan)
+
+The firm writes a response per item of the Letter 566 (noncash charity on Schedule A line 12 and Form 8283; Schedule C gross receipts against the 1099-NEC and 1099-K): a written answer plus the as-filed figures it rests on, traced to their pages, with verifications, client answers and attachments. The partner releases it. The examiner sees only what was released, masked. Internal review notes never leave. This replaces D17's "the examiner reads the current return".
+
+### D25. Amend on top is a full second round: LOCKED (Rohan)
+
+After filing, the return is frozen. An "open amendment" act with a reason lifts the freeze. New adjustments build an amended return, shown as filed vs amended with tax effect. It needs the sign-offs, the partner release and the clients' 8879 again, and is transmitted the same way. The original stays frozen and viewable.
+
+### D26. Roll forward and 2026 planning come right after step 5: LOCKED (Rohan)
+
+Step 5 is the CLAUDE.md list plus what filing needs (client approval, the client's copy). Carrying everything forward with its history and planning 2026 (estimates from planning_reference_2026, the Form 8801 credit, carryovers) is its own step before deploy and the write-ups.
+
+### D27. How filing is built: OPEN
+
+Code: `backend/workpaper/filing.py`, `identity.py`; screens `pages/Filing.jsx`, `pages/YourReturn.jsx`.
+
+- **The presented return** is what the clients sign and what goes out: the engine's summary, the balance moved by every applied adjustment's estimated effect, each line a person changed or added, and everyone's SSN. Its fingerprint is what an 8879 signs, so any change (a figure, an added lot, an SSN) leaves the signature on record but not current.
+- **Both spouses sign** (cu-01 and cu-02), on their own surface ("Your return"). A client who looked before a change gets a 409 on signing, the same way the partner release does.
+- **Transmit** stores what was sent. The agency's answer is never stored: it is worked out on every read from the packet's `efile` records, so it cannot drift from them. The number the agency holds for a person is what the packet's documents print for them, at any date.
+- **Correcting an SSN** names a document that prints it (`correct_identity {"person", "document"}`); the log never holds digits. R12 then reads the number on the return and marks the finding addressed. A rejected transmission is R12's evidence (`event:N`), replacing the dated packet entry.
+- **The freeze** is derived: a return is frozen when it was filed (original accepted, or amendment filed) and no amendment opened after. While frozen, every guarded act and judgment calls are refused; notes, questions, answers, evidence, time and the notice response still append. A transmission and a released notice response cannot be undone (they left the firm); a client's signature is replaced only by signing again.
+- **After acceptance**: the balance of the accepted return is paid, or refunded, dated at acceptance. A payment after April 15 shows interest and the late-payment penalty estimated from `post_filing_rates` (federal 7% a year and 0.5% a month; California 7% and 5% plus 0.5% a month), with the workings. Open for Rohan: dating the payment at acceptance (the July 20 date is the script's, which D23 took off the calendar).
+- **Amendment round**: the partner must release again after the amendment opened; area sign-offs reopen only where their covered values changed (the existing fingerprint rule). The amended return has no agency answer in the packet, so it is recorded as filed. The filing screen shows filed vs now per jurisdiction, and the amendment's settlement is the difference.
+
+### D28. How the notice response and the examiner are built: OPEN
+
+Code: `backend/workpaper/notices.py`, `views_filing.py`; screens `pages/Notice.jsx`, `pages/Examiner.jsx`.
+
+- Evidence for each item is suggested from the item's own words ("Schedule A line 12" and its inputs, "Form 8283", "Schedule C gross receipts", "Forms 1099-NEC"), plus the documents and client answers those lines rest on. A person picks what to send; saving again replaces the draft.
+- The release stores the whole package, resolved against the return as filed (projected to the accepting transmission): figures as filed, adjustments with reasons, sources down to the page field, verifications, client words, attachments by hash. The examiner reads exactly that, even after an amendment. A release is refused while an item has no answer, and gets a 409 if a draft changed after the partner looked.
+- The examiner's only routes are `/api/examiner` and `/api/examiner/export` (one HTML file, no scripts, masked). Every workpaper route answers 403.
+
+### D29. Firm: time, standards, search, view log: OPEN
+
+Code: `backend/workpaper/views_firm.py`; screen `pages/Firm.jsx`, `pages/Search.jsx`.
+
+- **Time**: `log_time` against a budget bucket (`time:<bucket>`: the work areas plus intake and partner review), 0 to 12 hours an entry. The firm page shows budget, logged, left and who, and flags an overrun.
+- **Standards**: the administrator changes a number or a list with a reason; the value keeps its type. Each change is an event, so the checker uses the new value from then on and replay shows the old one. Jo's home is the firm page; the return is one click away.
+- **Search** covers lines, documents, read values, findings, client words and people's notes. It matches on masked text for everyone, so it cannot be used to test whether a hidden number is in the file.
+- **View log**: the existing log of unmasked views and file opens, now on the firm page for the partner and the administrator.
+- Not built in step 5: a derived checklist of the firm's required steps (status is the filing stage and the deadlines). Proposed for the roll-forward step.
+
 ## Build plan
 
 1. Hunt the remaining planted errors (6 leads above so far).

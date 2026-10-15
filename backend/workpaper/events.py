@@ -40,6 +40,13 @@ ACTIONS = {
     "partner_release",      # partner signs the return once
     "set_standard",         # administrator changes a firm standard
     "view_sensitive",       # someone unmasked sensitive data
+    "correct_identity",     # the return takes a person's SSN from a document that prints it
+    "sign_8879",            # a client signs Form 8879 for the return as presented
+    "transmit",             # e-file the return (or an amendment); the agency's answer is derived
+    "open_amendment",       # lift the freeze after filing, with a reason, to amend on top
+    "notice_response",      # the firm's answer to one item of a notice (a draft until released)
+    "release_notice_response",  # the partner releases the notice response to the examiner
+    "log_time",             # hours against a budget bucket (a work area, intake, partner review)
 }
 
 # Acts that only record an audit fact. They never change the workpaper, so they do not

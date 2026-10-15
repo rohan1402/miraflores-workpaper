@@ -149,6 +149,10 @@ def ref_kind(ref: str) -> str:
         return "finding"
     if ref == "return":
         return "return"
+    if ref.startswith("notice:"):
+        return "notice"
+    if ref.startswith("time:"):
+        return "time"
     return "unknown"
 
 

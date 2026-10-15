@@ -23,6 +23,7 @@ export function useRoute() {
 
 export const href = {
   home: () => "#/",
+  theReturn: () => "#/return",
   area: (id) => `#/area/${encodeURIComponent(id)}`,
   line: (key) => `#/line/${encodeURIComponent(key)}`,
   doc: (id, page, ev) =>
@@ -32,6 +33,12 @@ export const href = {
   since: () => "#/since",
   questions: () => "#/questions",
   timeline: () => "#/timeline",
+  filing: () => "#/filing",
+  yourReturn: () => "#/your-return",
+  notice: () => "#/notice",
+  examiner: () => "#/examiner",
+  firm: () => "#/firm",
+  search: (q) => `#/search?q=${encodeURIComponent(q)}`,
 };
 
 // Turn any reference the server sends into a link, when there is a screen for it.
@@ -42,5 +49,6 @@ export function linkFor(ref) {
   if (/^D\d\d$/.test(ref)) return href.doc(ref);
   const page = ref.match(/^doc:(D\d\d)#page(\d+)$/);
   if (page) return href.doc(page[1], page[2]);
+  if (ref.startsWith("notice:")) return href.notice();
   return null;
 }

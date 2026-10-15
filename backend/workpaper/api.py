@@ -23,11 +23,11 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import views
+from . import views, views_filing, views_firm
 from .actions import Refusal, prepare, validate
 from .areas import SIGNED_SCOPES
 from .checker import RULES, CheckResult, run_checker
@@ -149,9 +149,12 @@ def create_app(packet_path: Path | str = PACKET_PATH, db_path: Path | str | None
         return everyone[person_id]
 
     def workpaper_reader(person: dict = Depends(current_person)) -> dict:
-        """Staff and the examiner read the workpaper. Clients have their own question surface (D1)."""
+        """Staff read the workpaper. Clients have their own surface (D1); the examiner sees only the
+        response the partner released (D24)."""
         if person["role"] == "client":
             raise HTTPException(403, "Clients use the question surface, not the workpaper.")
+        if person["role"] == "examiner":
+            raise HTTPException(403, "The examiner sees the response the firm released, not the workpaper.")
         return person
 
     def publish(e: Event) -> None:
@@ -222,6 +225,8 @@ def create_app(packet_path: Path | str = PACKET_PATH, db_path: Path | str | None
         if doc_id not in packet.documents:
             raise HTTPException(404, f"No document {doc_id}.")
         state, result = snapshots.get(replay_date(as_of))
+        if not state.document_visible(packet.documents[doc_id]):
+            raise HTTPException(404, f"{doc_id} has not arrived at this point in the season.")
         return views.document_view(packet, state, result, scopes, doc_id)
 
     @app.get("/api/findings")
@@ -357,6 +362,72 @@ def create_app(packet_path: Path | str = PACKET_PATH, db_path: Path | str | None
         return FileResponse(store.attachments_dir / digest[:2] / digest, media_type=meta["content_type"],
                             filename=meta["file_name"])
 
+    # ---- filing, the notice and the examiner (D23 to D25) -----------------------
+
+    @app.get("/api/filing")
+    def filing(as_of: str | None = None, person: dict = Depends(workpaper_reader)):
+        state, _ = snapshots.get(replay_date(as_of))
+        return {"meta": views.meta(state), **views_filing.filing_view(packet, state)}
+
+    @app.get("/api/client/return")
+    def client_return(person: dict = Depends(current_person)):
+        """The clients' view: the return as presented, the 8879, and their copy once filed."""
+        if not (person["role"] == "client" or is_staff(person)):
+            raise HTTPException(403, "Not available in this role.")
+        state, _ = snapshots.get()
+        return {"tip": state.tip, **views_filing.client_return_view(packet, state, person)}
+
+    @app.get("/api/notices")
+    def notice_list(person: dict = Depends(workpaper_reader)):
+        state, _ = snapshots.get()
+        return {"meta": views.meta(state), "notices": views_filing.notices_view(packet, state)}
+
+    @app.get("/api/notices/preview")
+    def notice_preview(notice: str, person: dict = Depends(workpaper_reader)):
+        """The package the partner would release, built now. Nothing is written."""
+        from . import notices as notice_rules
+        state, _ = snapshots.get()
+        found = notice_rules.notice_by_ref(state, notice)
+        if found is None:
+            raise HTTPException(404, "No such notice yet.")
+        return notice_rules.package(packet, state, found)
+
+    @app.get("/api/examiner")
+    def examiner(person: dict = Depends(current_person)):
+        if person["role"] not in ("examiner", "partner"):
+            raise HTTPException(403, "The released response is for the examiner (and the partner who released it).")
+        state, _ = snapshots.get()
+        return {"released": views_filing.examiner_view(state)}
+
+    @app.get("/api/examiner/export")
+    def examiner_export(person: dict = Depends(current_person)):
+        """The released response as one self-contained HTML file, masked like every other response."""
+        if person["role"] not in ("examiner", "partner"):
+            raise HTTPException(403, "Not available in this role.")
+        state, _ = snapshots.get()
+        released = masker(views_filing.examiner_view(state))
+        if not released:
+            raise HTTPException(404, "Nothing has been released.")
+        html = views_filing.export_html(released, packet.raw["firm"]["name"])
+        return HTMLResponse(html, headers={"Content-Disposition": 'attachment; filename="notice-response.html"'})
+
+    # ---- the firm: time, standards, search ------------------------------------
+
+    @app.get("/api/firm/time")
+    def firm_time(person: dict = Depends(workpaper_reader)):
+        state, _ = snapshots.get()
+        return views_firm.time_view(packet, state)
+
+    @app.get("/api/firm/standards")
+    def firm_standards(person: dict = Depends(workpaper_reader)):
+        state, _ = snapshots.get()
+        return views_firm.standards_view(packet, state)
+
+    @app.get("/api/search")
+    def search(q: str, as_of: str | None = None, person: dict = Depends(workpaper_reader)):
+        state, result = snapshots.get(replay_date(as_of))
+        return views_firm.search(packet, state, result, q, masker)
+
     # ---- the client's question surface ----------------------------------------
 
     @app.get("/api/client/questions")
@@ -402,15 +473,20 @@ def create_app(packet_path: Path | str = PACKET_PATH, db_path: Path | str | None
 
 def _visible(person: dict, event: dict) -> bool:
     """Staff see every change (unmask records stay in the view log). A client sees questions sent
-    to the client and their own acts. The examiner's view is frozen at filing: no live events."""
+    to the client, their own acts, and the filing acts about their return. The examiner reads only
+    the released response: no live events."""
     if event["action"] == "view_sensitive":
         return False
     if is_staff(person):
         return True
     if person["role"] == "client":
-        return event["actor"] == person["id"] or (event["action"] == "question"
-                                                  and event["payload"].get("to") == "client")
+        return (event["actor"] == person["id"] or event["action"] in CLIENT_SEES
+                or (event["action"] == "question" and event["payload"].get("to") == "client"))
     return False
+
+
+# Filing acts a client is told about live: the return is ready to sign, a spouse signed, it went out.
+CLIENT_SEES = {"partner_release", "sign_8879", "transmit", "open_amendment"}
 
 
 app = create_app()

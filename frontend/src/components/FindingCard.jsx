@@ -1,7 +1,9 @@
 // One checker finding: what is wrong, the proof, the proposed change and its estimated effect.
 import { Estimate, MachineBadge, Ref, SeverityDot } from "./common.jsx";
 import { ActionBar, useCan } from "./Act.jsx";
-import { AdjustForm, AttachForm, DispositionForm, JudgmentForm, NoteForm, QuestionForm } from "./Forms.jsx";
+import {
+  AdjustForm, AttachForm, CorrectIdentityForm, DispositionForm, JudgmentForm, NoteForm, QuestionForm,
+} from "./Forms.jsx";
 import { figure, money } from "../format.js";
 
 export default function FindingCard({ finding, tip }) {
@@ -94,8 +96,16 @@ export default function FindingCard({ finding, tip }) {
           actions={[
             {
               // A document finding has no figure to fix: its answer is the disposition on the document (D20).
-              key: "dispose", label: "Record the disposition", primary: true, allowed: Boolean(f.answer) && can("disposition"),
+              key: "dispose", label: "Record the disposition", primary: true,
+              allowed: f.answer?.act === "disposition" && can("disposition"),
               render: (done) => <DispositionForm doc={f.answer.document} suggestion={f.answer} tip={tip} onDone={done} />,
+            },
+            {
+              // An SSN is fixed from a document that prints it; the agency reads the digits on the return (D23).
+              key: "identity", label: "Correct the number", primary: true,
+              allowed: f.answer?.act === "correct_identity" && can("correct_identity"),
+              render: (done) => <CorrectIdentityForm person={f.answer.person} documents={f.answer.documents} finding={f.id}
+                                                     tip={tip} onDone={done} />,
             },
             {
               key: "fix", label: "Fix with an adjustment", primary: true, allowed: Boolean(fix) && can("adjust"),

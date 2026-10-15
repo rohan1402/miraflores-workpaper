@@ -126,6 +126,8 @@ class State:
     records: list[Record] = field(default_factory=list)
     standards: dict = field(default_factory=dict)
     added_lines: dict[str, dict] = field(default_factory=dict)  # lines a person added with an adjustment
+    identity_corrections: dict[str, dict] = field(default_factory=dict)  # person -> {document, event}
+    hidden_documents: set[str] = field(default_factory=set)  # a notice about this return, before any acceptance
     _merged_lines: dict | None = field(default=None, repr=False)
 
     # ---- lines ---------------------------------------------------------------
@@ -161,6 +163,12 @@ class State:
         """Adjustments whose 'from' no longer matches the figure on screen (a new version, or an undo before them)."""
         return [a for chain in self.adjustments.values() for a in chain if not a.applied]
 
+    def document_visible(self, doc: dict) -> bool:
+        """Received by the projection's clock, and not a notice about a return nobody filed yet."""
+        if doc["id"] in self.hidden_documents:
+            return False
+        return self.as_of is None or doc["received_at"] <= self.as_of
+
     # ---- review notes --------------------------------------------------------
 
     def open_review_notes(self) -> list[ReviewNote]:
@@ -190,6 +198,8 @@ def project(packet: Packet, events: list[Event], as_of: str | None = None) -> St
             continue
         APPLY.get(e.action, _apply_record)(state, e)
     _settle_adjustments(state)
+    from .filing import hidden_documents   # filing reads the projected state, so it is imported here
+    state.hidden_documents = hidden_documents(state)
     return state
 
 
@@ -258,6 +268,12 @@ def _apply_adjust(state: State, e: Event) -> None:
         ))
 
 
+def _apply_correct_identity(state: State, e: Event) -> None:
+    # {"person": "theo", "document": "D06"}: the return now carries the number that document prints.
+    state.identity_corrections[e.payload["person"]] = {"document": e.payload["document"], "event": e.id}
+    _apply_record(state, e)
+
+
 def _apply_review_note(state: State, e: Event) -> None:
     state.review_notes[e.id] = ReviewNote(**_act(e), targets=e.targets, text=e.payload.get("text", ""))
 
@@ -322,6 +338,7 @@ APPLY = {
     "partner_release": _apply_partner_release,
     "approve_adjustment": _apply_approve_adjustment,
     "set_standard": _apply_set_standard,
+    "correct_identity": _apply_correct_identity,
 }
 
 
