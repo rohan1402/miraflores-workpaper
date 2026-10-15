@@ -3,6 +3,8 @@
 import { useState } from "react";
 import { useApi } from "../api.js";
 import { Counts, ErrorBox, HumanBadge, Loading, MachineBadge } from "../components/common.jsx";
+import { ActionBar, useCan } from "../components/Act.jsx";
+import { SignOffForm, VerifyForm } from "../components/Forms.jsx";
 import { change, figure, money, pct } from "../format.js";
 import { href } from "../router.js";
 import { Tick } from "../App.jsx";
@@ -18,10 +20,19 @@ export default function Area({ id, me, names, refreshKey }) {
   const { data, error } = useApi(`/api/areas/${id}`, refreshKey);
   const defaultFilter = me.config.default_filters?.includes("variance") ? "flagged" : "all";
   const [filter, setFilter] = useState(defaultFilter);
+  const [picked, setPicked] = useState(new Set());
+  const can = useCan();
   if (error) return <ErrorBox error={error} />;
   if (!data) return <Loading />;
   const { area, lines, accounts } = data;
   const shown = lines.filter(FILTERS[filter].test);
+  const tip = data.meta.tip;
+  const level = { preparer: "preparer", reviewer: "reviewer" }[me.person.role];
+  const toggle = (key) => setPicked((s) => {
+    const next = new Set(s);
+    next.has(key) ? next.delete(key) : next.add(key);
+    return next;
+  });
 
   return (
     <div className="page">
@@ -43,6 +54,20 @@ export default function Area({ id, me, names, refreshKey }) {
       </div>
 
       {area.preparer.status === "reopened" && <Reopened status={area.preparer} />}
+      {area.reviewer.status === "reopened" && <Reopened status={area.reviewer} />}
+
+      <ActionBar
+        actions={[
+          { key: "sign", label: `Sign ${area.label} as ${level}`, primary: true, allowed: Boolean(level) && can("sign_off"),
+            render: (done) => <SignOffForm area={area.id} label={area.label} tip={tip} level={level}
+                                           openErrors={area.open_findings.error} onDone={done} /> },
+          { key: "verify", label: `Verify ${picked.size} selected line${picked.size === 1 ? "" : "s"}`,
+            allowed: picked.size > 0 && can("verify"),
+            render: (done) => <VerifyForm targets={[...picked].map((k) => `line:${k}`)} tip={tip}
+                                          what="One act; one undo reverses all of them."
+                                          onDone={() => { setPicked(new Set()); done(); }} /> },
+        ]}
+      />
 
       <div className="filters">
         {Object.entries(FILTERS).map(([key, f]) => (
@@ -52,7 +77,7 @@ export default function Area({ id, me, names, refreshKey }) {
         ))}
       </div>
 
-      <LineTable rows={shown} names={names} />
+      <LineTable rows={shown} names={names} picked={can("verify") ? picked : null} onPick={toggle} />
 
       {accounts.length > 0 && (
         <section>
@@ -74,6 +99,11 @@ function SignerLine({ label, status, names }) {
       <span>
         {label}: {status.by ? names[status.by] || status.by : <span className="muted">not signed</span>}
         {status.status === "reopened" && <span className="tag warn">reopened</span>}
+        {status.waiver && (
+          <span className="tag" title={`Waiver: ${status.waiver}`}>
+            with waiver ({status.waived.length} open)
+          </span>
+        )}
       </span>
     </div>
   );
@@ -92,12 +122,13 @@ function Reopened({ status }) {
   );
 }
 
-export function LineTable({ rows, names, compact }) {
+export function LineTable({ rows, names, compact, picked, onPick }) {
   if (!rows.length) return <p className="muted">No lines match.</p>;
   return (
     <table className={`lines ${compact ? "compact" : ""}`}>
       <thead>
         <tr>
+          {picked && <th className="pick" />}
           <th>Line</th>
           <th>Description</th>
           <th className="num">2024</th>
@@ -108,18 +139,23 @@ export function LineTable({ rows, names, compact }) {
       </thead>
       <tbody>
         {rows.map((r) => (
-          <LineRow key={r.key} row={r} names={names} />
+          <LineRow key={r.key} row={r} names={names} picked={picked} onPick={onPick} />
         ))}
       </tbody>
     </table>
   );
 }
 
-function LineRow({ row, names }) {
+function LineRow({ row, names, picked, onPick }) {
   const c = change(row.value, row.prior);
   const go = () => (window.location.hash = href.line(row.key));
   return (
     <tr className="clickable" onClick={go}>
+      {picked && (
+        <td className="pick" onClick={(e) => e.stopPropagation()}>
+          <input type="checkbox" checked={picked.has(row.key)} onChange={() => onPick(row.key)} aria-label={`Select ${row.key}`} />
+        </td>
+      )}
       <td className="key">
         <a href={href.line(row.key)} onClick={(e) => e.stopPropagation()}>
           {row.key}

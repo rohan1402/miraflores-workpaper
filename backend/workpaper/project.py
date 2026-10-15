@@ -452,8 +452,10 @@ def signoff_status(state: State, signoff: SignOff | None) -> dict:
     if signoff is None:
         return {"status": "unsigned"}
     current = covered_values(state, signoff.area)
+    signed_with = {"waiver": signoff.waiver, "waived": list(signoff.waived)} if signoff.waiver else {}
     if fingerprint(current) == signoff.fingerprint:
-        return {"status": "signed", "by": signoff.actor, "event": signoff.event_id, "version": signoff.version}
+        return {"status": "signed", "by": signoff.actor, "at": signoff.at, "event": signoff.event_id,
+                "version": signoff.version, **signed_with}
     causes_of = _cause_finder(state, signoff)
     changes = [
         {"key": k, "signed": signoff.covered.get(k), "now": current.get(k), "causes": causes_of(k)}
@@ -467,6 +469,8 @@ def signoff_status(state: State, signoff: SignOff | None) -> dict:
     return {
         "status": "reopened",
         "by": signoff.actor,
+        "at": signoff.at,
+        **signed_with,
         "event": signoff.event_id,
         "signed_version": signoff.version,
         "current_version": state.version_id,

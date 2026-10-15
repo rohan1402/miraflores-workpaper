@@ -6,6 +6,9 @@ import { useEffect, useRef, useState } from "react";
 import { postJSON, useApi } from "../api.js";
 import { ErrorBox, HumanBadge, Loading, MachineBadge } from "../components/common.jsx";
 import FindingCard from "../components/FindingCard.jsx";
+import History from "../components/History.jsx";
+import { ActionBar, useCan } from "../components/Act.jsx";
+import { AcceptForm, AttachForm, DispositionForm, NoteForm, QuestionForm, VerifyForm } from "../components/Forms.jsx";
 import PageText, { printedValue, valueNeedles } from "../components/PageText.jsx";
 import { date } from "../format.js";
 import { href } from "../router.js";
@@ -25,6 +28,7 @@ export default function Document({ docId, params, me, names, refreshKey }) {
   if (error) return <ErrorBox error={error} />;
   if (!data) return <Loading />;
   const { document: d, pages, landed_on: landed, not_used_because: notUsed, disposition, owners, findings } = data;
+  const tip = data.meta.tip;
   const current = pages.find((p) => p.page === pageNo) || pages.find((p) => p.values.some((v) => v.id === selected)) || pages[0];
 
   const choose = (page, ev) => {
@@ -70,11 +74,14 @@ export default function Document({ docId, params, me, names, refreshKey }) {
                 ))}
               </span>
             ) : (
-              <span className="warn">nowhere: {notUsed}</span>
+              // A dispositioned document landing nowhere is settled; one without a disposition is a question.
+              <span className={disposition ? "muted" : "warn"}>nowhere: {notUsed}</span>
             )}
           </dd>
         </dl>
       </div>
+
+      <DocumentActions doc={d} tip={tip} findings={findings} reconciliation={data.reconciliation} />
 
       {findings.length > 0 && (
         <details className="doc-findings" open={findings.some((f) => f.severity === "error")}>
@@ -82,7 +89,7 @@ export default function Document({ docId, params, me, names, refreshKey }) {
             {findings.length} checker finding{findings.length > 1 ? "s" : ""} on this document
           </summary>
           {findings.map((f) => (
-            <FindingCard key={f.id} finding={f} names={names} />
+            <FindingCard key={f.id} finding={f} tip={tip} />
           ))}
         </details>
       )}
@@ -102,14 +109,53 @@ export default function Document({ docId, params, me, names, refreshKey }) {
         </div>
       )}
 
-      <PageView key={`${d.id}-${current.page}`} page={current} selected={selected} onSelect={(ev) => choose(current.page, ev)} me={me} names={names} />
+      <PageView key={`${d.id}-${current.page}`} page={current} selected={selected} onSelect={(ev) => choose(current.page, ev)}
+                me={me} names={names} tip={tip} />
+
+      <History refId={d.id} tip={tip} refreshKey={refreshKey} />
     </div>
   );
 }
 
-function PageView({ page, selected, onSelect, me, names }) {
+// What the checker found suggests the disposition; a person still records it, with a reason.
+function suggestedDisposition(doc, findings) {
+  for (const f of findings) {
+    if (f.code === "DUPLICATE_DOCUMENT" && f.targets.includes(doc.id)) return { disposition: "duplicate", of: f.details.duplicate_of };
+    if (f.code === "SUPERSEDED_DOCUMENT" && f.details.superseded === doc.id) return { disposition: "superseded", by: f.details.by };
+    if (f.code === "DOCUMENT_NOT_EXTRACTED") return { disposition: "not_extracted" };
+  }
+  const unread = findings.filter((f) => f.code === "PAGE_NOT_READ").map((f) => Number(f.id.split("#page")[1]));
+  if (unread.length) return { disposition: "partial", pages: unread };
+  return { disposition: "used" };
+}
+
+function DocumentActions({ doc, tip, findings, reconciliation }) {
+  const can = useCan();
+  const count = doc.extraction.values;
+  return (
+    <ActionBar
+      actions={[
+        { key: "disposition", label: "Disposition", primary: true, allowed: can("disposition"),
+          render: (done) => <DispositionForm doc={doc.id} tip={tip} pages={doc.page_count}
+                                             suggestion={suggestedDisposition(doc, findings)} onDone={done} /> },
+        { key: "accept", label: `Accept all ${count} values`, allowed: can("accept_document") && count > 0,
+          render: (done) => <AcceptForm doc={doc.id} tip={tip} count={count} ties={Boolean(reconciliation)} onDone={done} /> },
+        { key: "note", label: "Note", allowed: can("note"),
+          render: (done) => <NoteForm targets={[doc.id]} tip={tip} onDone={done} /> },
+        { key: "ask", label: "Ask", allowed: can("question"),
+          render: (done) => <QuestionForm targets={[doc.id]} tip={tip} onDone={done} /> },
+        { key: "attach", label: "Attach evidence", allowed: can("attach_evidence"),
+          render: (done) => <AttachForm targets={[doc.id]} tip={tip} onDone={done} /> },
+      ]}
+    />
+  );
+}
+
+function PageView({ page, selected, onSelect, me, names, tip }) {
   const [showAll, setShowAll] = useState(false);
   const [revealed, setRevealed] = useState({});
+  const [verifying, setVerifying] = useState(null);
+  const can = useCan();
   const chosen = page.values.find((v) => v.id === selected);
   const selectedRow = useRef(null);
 
@@ -202,7 +248,17 @@ function PageView({ page, selected, onSelect, me, names }) {
                   </a>
                 ))}
                 {v.lines.length === 0 && <span className="muted small">on no line</span>}
+                {can("verify") && verifying !== v.id && (
+                  <button className="link small" onClick={(e) => (e.stopPropagation(), setVerifying(v.id))}>
+                    verify
+                  </button>
+                )}
               </div>
+              {verifying === v.id && (
+                <div className="value-verify" onClick={(e) => e.stopPropagation()}>
+                  <VerifyForm targets={[v.id]} tip={tip} what={`${v.label} as printed on page ${page.page}`} onDone={() => setVerifying(null)} />
+                </div>
+              )}
             </div>
           ))}
         </div>

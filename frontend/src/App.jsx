@@ -1,8 +1,8 @@
 // The shell: who is acting (role switcher), where you are (hash routes), and live updates.
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { getJSON, postJSON, useApi } from "./api.js";
+import { AppContext, getJSON, postJSON, useApi } from "./api.js";
 import { describeEvent } from "./events.js";
-import { ROLE_LABEL, initials } from "./format.js";
+import { ROLE_LABEL, date, initials } from "./format.js";
 import { href, useRoute } from "./router.js";
 import { Counts } from "./components/common.jsx";
 import Home from "./pages/Home.jsx";
@@ -13,6 +13,7 @@ import Documents from "./pages/Documents.jsx";
 import Findings from "./pages/Findings.jsx";
 import Since from "./pages/Since.jsx";
 import Questions from "./pages/Questions.jsx";
+import Timeline from "./pages/Timeline.jsx";
 
 export default function App() {
   const route = useRoute();
@@ -22,8 +23,11 @@ export default function App() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [live, setLive] = useState("off");
   const [notices, setNotices] = useState([]);
+  const [asOf, setAsOf] = useState(null); // replay date (YYYY-MM-DD); null = now
 
   const names = useMemo(() => Object.fromEntries(people.map((p) => [p.id, p.name])), [people]);
+  const refresh = useCallback(() => setRefreshKey((k) => k + 1), []);
+  const context = useMemo(() => ({ me, names, asOf, setAsOf, refresh }), [me, names, asOf, refresh]);
 
   useEffect(() => {
     getJSON("/api/people").then(setPeople);
@@ -62,8 +66,18 @@ export default function App() {
 
   const surface = me.config.surface;
   return (
+    <AppContext.Provider value={context}>
     <div className="app">
       <TopBar me={me} people={people} onChoose={choose} live={live} refreshKey={refreshKey} />
+      {asOf && (
+        <div className="replay-banner">
+          Replaying the season as of <strong>{date(`${asOf}T12:00:00Z`)}</strong>: the version, documents and people's acts as
+          they stood that day. Read only.
+          <button className="link" onClick={() => setAsOf(null)}>
+            Back to now
+          </button>
+        </div>
+      )}
       <div className="body">
         {surface === "questions" ? null : <Nav route={route} refreshKey={refreshKey} />}
         <main className="main">
@@ -78,6 +92,7 @@ export default function App() {
         ))}
       </div>
     </div>
+    </AppContext.Provider>
   );
 }
 
@@ -99,6 +114,8 @@ function Page({ route, me, names, refreshKey }) {
       return <Since {...props} />;
     case "questions":
       return <Questions {...props} />;
+    case "timeline":
+      return <Timeline {...props} />;
     default:
       return <Home {...props} />;
   }
@@ -175,6 +192,10 @@ function Nav({ route, refreshKey }) {
       </a>
       <a className={at("questions") ? "active" : ""} href={href.questions()}>
         Client questions
+      </a>
+      <div className="nav-group">Season</div>
+      <a className={at("timeline") ? "active" : ""} href={href.timeline()}>
+        Timeline and replay
       </a>
     </nav>
   );

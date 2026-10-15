@@ -209,6 +209,30 @@ One unmasked projection and checker result, masked on the way out. It is keyed o
 
 Clients get a 403 from the workpaper routes and have their own question surface (`/api/client/questions`, answer, upload). The examiner reads the current return, masked, and receives no live events. Pinning the examiner's reads to the filing tip is step 5.
 
+## Step 4 build decisions (OPEN until Rohan locks them)
+
+The workflow on screen (2026-10-15). Code: `frontend/src/components/Act.jsx`, `Forms.jsx`, `History.jsx`, `pages/Timeline.jsx`; server additions in `api.py`, `views.py`, `actions.py`.
+
+### D18. Forms send intent; every rule stays on the server: OPEN
+
+Each form posts only what the person chose (a figure, a reason, a verification type, a waiver sentence) through one hook, `useAct`. The server computes the rest and answers 403, 422 or 409; the screen shows that answer in the server's words, and a 409 names the act that landed first. Buttons appear only for the role's verbs, but that is convenience: the server decides. The adjustment form previews the estimated effect from the server (`/api/estimate`) before saving; nothing is written by a preview. Evidence files attach to a line, document or finding; the history links to them, and opening one is the logged, cleared-only view D13 describes.
+
+### D19. Disposition says what and why: OPEN
+
+A disposition needs a reason. A duplicate names the document it copies, a superseded document names its replacement, a partial one lists its pages. The form is prefilled from what the checker found (D10 as a duplicate of D09, D31 partial at page 32); a person still records it.
+
+### D20. Findings are answered from the finding: OPEN
+
+A finding card offers "Fix with an adjustment" (prefilled with the proposed figure and linked to the finding, so it becomes addressed), "Accept as is" (a judgment call that must name its authority), a note, and a question. Fix is offered only when the finding proposes a new figure for a line that exists.
+
+### D21. Many at once, one undo: OPEN
+
+Lines can be selected in an area and verified in one act; accepting a document verifies all its values in one act. One undo reverses the whole act; the undone act stays in the record, struck through, in the history of every line or document it touched.
+
+### D22. Replay is a read: OPEN
+
+Every read takes `?as_of=YYYY-MM-DD`: the version, documents, agency records and people's acts as they stood at the end of that day. The screen says it is replaying and offers no acts. The timeline interleaves the packet's scripted season with people's acts; any entry can be replayed to.
+
 ## Build plan
 
 1. Hunt the remaining planted errors (6 leads above so far).

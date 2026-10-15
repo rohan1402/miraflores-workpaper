@@ -31,6 +31,7 @@ export const href = {
   findings: (area) => "#/findings" + (area ? `?area=${encodeURIComponent(area)}` : ""),
   since: () => "#/since",
   questions: () => "#/questions",
+  timeline: () => "#/timeline",
 };
 
 // Turn any reference the server sends into a link, when there is a screen for it.

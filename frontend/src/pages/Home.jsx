@@ -1,7 +1,10 @@
 // Home (D1): the return, 2025 vs 2024, by work area. Role changes the order and focus, not the home.
 import { useApi } from "../api.js";
-import { Counts, ErrorBox, Estimate, Loading } from "../components/common.jsx";
-import { ROLE_LABEL, change, date, money, pct } from "../format.js";
+import { useState } from "react";
+import { Counts, ErrorBox, Estimate, Loading, Ref } from "../components/common.jsx";
+import { useCan } from "../components/Act.jsx";
+import { ReleaseForm, ResolveForm } from "../components/Forms.jsx";
+import { ROLE_LABEL, change, date, dateTime, money, pct } from "../format.js";
 import { href } from "../router.js";
 import { Tick } from "../App.jsx";
 
@@ -39,7 +42,9 @@ export default function Home({ me, names, refreshKey }) {
           </div>
         </section>
         <aside className="side">
-          <ReleaseCard release={release} blockers={blockers} names={names} areas={areas} />
+          <ReleaseCard release={release} blockers={blockers} names={names} areas={areas}
+                       preview={data.release_will_approve} tip={meta.tip} />
+          <ReviewNotes notes={data.review_notes} names={names} tip={meta.tip} />
           <div className="card">
             <h3>If every open correction were made</h3>
             <p className="muted small">
@@ -132,8 +137,10 @@ function Signer({ label, status, names }) {
   );
 }
 
-function ReleaseCard({ release, blockers, names, areas }) {
+function ReleaseCard({ release, blockers, names, areas, preview, tip }) {
   const label = (id) => areas.find((a) => a.id === id)?.label || id;
+  const can = useCan();
+  const [releasing, setReleasing] = useState(false);
   return (
     <div className={`card release ${release.status}`}>
       <h3>Partner release</h3>
@@ -153,6 +160,43 @@ function ReleaseCard({ release, blockers, names, areas }) {
       ) : (
         <p className="small ok">Nothing blocks the release.</p>
       )}
+      {can("partner_release") && !blockers.length && release.status !== "signed" && (
+        releasing ? (
+          <ReleaseForm tip={tip} preview={preview} onDone={() => setReleasing(false)} />
+        ) : (
+          <button className="primary" onClick={() => setReleasing(true)}>
+            Release the return
+          </button>
+        )
+      )}
+    </div>
+  );
+}
+
+// Open review notes block the release until someone resolves them.
+function ReviewNotes({ notes, names, tip }) {
+  const can = useCan();
+  const [resolving, setResolving] = useState(null);
+  if (!notes.length) return null;
+  return (
+    <div className="card">
+      <h3>Open review notes</h3>
+      <ul className="notes-list">
+        {notes.map((n) => (
+          <li key={n.event}>
+            <div className="small muted">
+              {names[n.by] || n.by} · {dateTime(n.at)} · on {n.targets.map((t) => <Ref key={t} value={t} />)}
+            </div>
+            <div>{n.text}</div>
+            {can("resolve_review_note") && resolving !== n.event && (
+              <button className="link small" onClick={() => setResolving(n.event)}>
+                Resolve
+              </button>
+            )}
+            {resolving === n.event && <ResolveForm noteEvent={n.event} tip={tip} onDone={() => setResolving(null)} />}
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }

@@ -18,7 +18,8 @@ from .concurrency import ConflictRule
 from .events import Event
 from .packet import Packet, page_ref, parse_page_ref, ref_kind
 from .project import (
-    State, area_status, effect_view, large_adjustments, release_blockers, signoff_status,
+    PARTNER_THRESHOLD, State, area_status, effect_view, estimate_adjustment, large_adjustments, large_waivers,
+    release_blockers, signoff_status,
 )
 from .roles import home_config, verbs
 
@@ -64,6 +65,9 @@ def home(packet: Packet, state: State, result: CheckResult, scopes: ConflictRule
         "areas": areas,
         "partner_release": signoff_status(state, state.partner_release),
         "release_blockers": release_blockers(state),
+        "release_will_approve": release_preview(state),
+        "review_notes": [{"event": n.event_id, "by": n.actor, "at": n.at, "targets": list(n.targets), "text": n.text}
+                         for n in state.open_review_notes()],
         "findings": {sev: sum(1 for f in open_findings if f.severity == sev) for sev in ("error", "warning", "info")},
         "open_corrections": result.net_effect,
     }
@@ -380,6 +384,7 @@ def document_view(packet: Packet, state: State, result: CheckResult, scopes: Con
                         "event": disp.event_id, "reason": disp.reason} if disp else None,
         "landed_on": sorted(landed),
         "not_used_because": None if landed else _why_not_used(d, state, findings),
+        "reconciliation": next((r for r in result.reconciliations if r.get("document") == doc_id), None),
         "pages": pages,
         "findings": [f.as_dict() for f in findings],
     }
@@ -421,14 +426,69 @@ def _why_not_used(d: dict, state: State, findings: list) -> str:
 
 # ---- findings ---------------------------------------------------------------------
 
-def findings_view(result: CheckResult, scopes: ConflictRule, area: str | None = None, status: str | None = None) -> dict:
+def findings_view(state: State, result: CheckResult, scopes: ConflictRule, area: str | None = None,
+                  status: str | None = None) -> dict:
     found = [f for f in result.findings
              if (status is None or f.status == status)
              and (area is None or f"area:{area}" in scopes.refs_scope(f.targets))]
     return {
+        "meta": meta(state),
         "rules": {rule: title for rule, (title, _) in RULES.items()},
         "findings": [f.as_dict() for f in found],
         "corrected_lines": result.corrected_lines,
         "net_effect": result.net_effect,
         "reconciliations": result.reconciliations,
     }
+
+
+# ---- workflow ---------------------------------------------------------------------
+
+def release_preview(state: State) -> dict:
+    """What a partner release would sign in the same act: large adjustments and large waived errors."""
+    return {
+        "adjustments": [{"event": a.event_id, "line": a.line, "from": a.original, "to": a.value, "by": a.actor,
+                         "reason": a.reason, "effect": a.effect, "approved": a.event_id in state.partner_approvals}
+                        for a in large_adjustments(state)],
+        "waivers": large_waivers(state),
+    }
+
+
+def estimate_preview(state: State, key: str, to: float) -> dict:
+    """The estimated effect an adjustment would store, before anyone saves it."""
+    original = state.line_value(key)
+    effect = estimate_adjustment(state, key, original, to)
+    eff = effect.as_dict() if effect else None
+    return {"line": key, "from": original, "to": to, "version": state.version_id, "effect": eff,
+            "needs_partner": bool(eff) and (abs(eff["federal"]) > PARTNER_THRESHOLD
+                                            or abs(eff["california"]) > PARTNER_THRESHOLD)}
+
+
+def history(packet: Packet, state: State, ref: str) -> list[dict]:
+    """Every act that touched a reference, oldest first. A document also gathers acts on its pages
+    and values; a finding gathers acts made for it. Undone acts stay, marked."""
+    if ref in packet.documents:
+        related = {ref} | {page_ref(ref, p["page"]) for p in packet.documents[ref]["pages"]} \
+                  | {ev["id"] for ev in packet.values_by_doc.get(ref, [])}
+    else:
+        related = {ref}
+    out = []
+    for e in state.events:
+        if e.action == "view_sensitive":
+            continue
+        refs = set(e.targets) | set(e.payload.get("undoes", {}).get("targets", []))
+        if e.payload.get("finding"):
+            refs.add(f"finding:{e.payload['finding']}")
+        if refs & related:
+            out.append({**event_view(e), "undone": e.id in state.undone})
+    return out
+
+
+def timeline(packet: Packet, state: State) -> list[dict]:
+    """The season as the packet scripts it (documents, recomputes, e-file, payments, the 2028 notice),
+    interleaved with every person's act. Replaying to any of these moments is a read with ?as_of."""
+    items = [{"at": t["at"], "kind": "season", "id": t["id"], "event": t["event"], "actor": t["actor"],
+              "detail": t["detail"], "refs": t["refs"]} for t in packet.raw["timeline"]]
+    items += [{"at": e.at, "kind": "act", "id": f"event:{e.id}", "event": e.action, "actor": e.actor,
+               "detail": e.reason, "refs": list(e.targets), "payload": e.payload, "undone": e.id in state.undone}
+              for e in state.events if e.action != "view_sensitive"]
+    return sorted(items, key=lambda i: i["at"])

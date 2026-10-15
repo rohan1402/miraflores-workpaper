@@ -323,3 +323,68 @@ def test_stream_sends_the_backlog_then_live_events_masked_and_filtered():
 
 def test_sse_wire_format():
     assert sse(7, "wp-event", {"a": 1}) == 'id: 7\nevent: wp-event\ndata: {"a": 1}\n\n'
+
+
+# ---- step 4: workflow support --------------------------------------------------------
+
+def test_replay_reads_the_return_as_it_stood(client):
+    march = client.get("/api/return?as_of=2026-03-15", headers=as_(HELEN)).json()
+    assert (march["meta"]["version"], march["meta"]["as_of"]) == ("v1", "2026-03-15T23:59:59Z")
+    ids = {f["id"] for f in client.get("/api/findings?as_of=2026-03-15", headers=as_(HELEN)).json()["findings"]}
+    assert "SUPERSEDED_DOCUMENT:D30" not in ids          # the corrected 1099 arrived on March 18
+    assert "SSN_MISMATCH:theo" in ids                      # but last year's return already shows Theo's SSN
+    now = {f["id"] for f in client.get("/api/findings", headers=as_(HELEN)).json()["findings"]}
+    assert "SUPERSEDED_DOCUMENT:D30" in now
+
+
+def test_timeline_interleaves_the_season_and_peoples_acts(client):
+    act(client, PRIYA, "note", ["line:F1040.26"], {"text": "transcript pulled"})
+    items = client.get("/api/timeline", headers=as_(DANIEL)).json()
+    assert sum(1 for i in items if i["kind"] == "season") == 29
+    assert [i["event"] for i in items if i["kind"] == "act"] == ["note"]
+    assert [i["at"] for i in items] == sorted(i["at"] for i in items)
+    assert items[-1]["event"] == "notice_received"   # the 2028 examination letter still comes after today
+
+
+def test_history_of_a_line_marks_what_was_undone(client):
+    adj = act(client, PRIYA, "adjust", ["line:SchC.9"], {"to": 5670}, reason="page 3 is a second scan").json()["event"]
+    act(client, DANIEL, "review_note", ["line:SchC.9"], {"text": "miles too?"})
+    act(client, PRIYA, "undo", [f"event:{adj['id']}"], reason="redo with miles")
+    history = client.get("/api/history?ref=line:SchC.9", headers=as_(DANIEL)).json()
+    assert [(h["action"], h["undone"]) for h in history] == [("adjust", True), ("review_note", False), ("undo", False)]
+
+
+def test_history_of_a_document_includes_acts_on_its_values(client):
+    act(client, PRIYA, "verify", ["ev-0049"], {"verification_type": "agreed_to_source_document"})
+    act(client, PRIYA, "disposition", ["D10"], {"disposition": "duplicate", "of": "D09"}, reason="phone photo of D09")
+    assert [h["action"] for h in client.get("/api/history?ref=D10", headers=as_(DANIEL)).json()] == ["verify", "disposition"]
+
+
+def test_estimate_preview_writes_nothing(client):
+    small = client.get("/api/estimate?line=SchC.9&to=5670", headers=as_(PRIYA)).json()
+    assert (small["effect"]["federal"], small["effect"]["california"], small["needs_partner"]) == (919, 80, False)
+    assert client.get("/api/estimate?line=Sch1.17&to=0", headers=as_(PRIYA)).json()["needs_partner"] is True
+    assert client.get("/api/me", headers=as_(PRIYA)).json()["tip"] == 0
+
+
+def test_home_lists_open_review_notes_and_what_the_release_will_approve(client):
+    act(client, DANIEL, "review_note", ["line:SchC.9"], {"text": "mileage page 3?"})
+    act(client, PRIYA, "adjust", ["line:Sch1.17"], {"to": 0}, reason="eligible for employer family coverage")
+    home = client.get("/api/return", headers=as_(HELEN)).json()
+    assert [n["text"] for n in home["review_notes"]] == ["mileage page 3?"]
+    assert [a["line"] for a in home["release_will_approve"]["adjustments"]] == ["Sch1.17"]
+
+
+@pytest.mark.parametrize("payload,reason,expect", [
+    ({"disposition": "duplicate", "of": "D09"}, None, "needs a reason"),
+    ({"disposition": "duplicate"}, "phone photo", "names the document it copies"),
+    ({"disposition": "partial"}, "page 32 unread", "lists the pages"),
+])
+def test_disposition_says_what_and_why(client, payload, reason, expect):
+    r = act(client, PRIYA, "disposition", ["D10"], payload, reason=reason)
+    assert r.status_code == 422 and any(expect in x for x in r.json()["refused"])
+
+
+def test_verify_points_at_something_real(client):
+    r = act(client, PRIYA, "verify", ["line:NOPE.1"], {"verification_type": "recalculated"})
+    assert r.status_code == 422 and "Nothing to verify" in r.json()["refused"][0]

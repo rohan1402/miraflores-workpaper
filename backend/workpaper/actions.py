@@ -102,6 +102,24 @@ def _verification_type(packet, state, result, scopes, person, e) -> list[str]:
     return [] if vt in allowed else [f"Verification type must be one of: {', '.join(allowed)}."]
 
 
+def _verify(packet, state, result, scopes, person, e) -> list[str]:
+    reasons = _verification_type(packet, state, result, scopes, person, e)
+    missing = [t for t in e.targets
+               if not (t in packet.values or (t.startswith("line:") and t[len("line:"):] in state.lines))]
+    if not e.targets:
+        reasons.append("Choose what you verified.")
+    if missing:
+        reasons.append(f"Nothing to verify at {', '.join(missing)}.")
+    return reasons
+
+
+def _accept_document(packet, state, result, scopes, person, e) -> list[str]:
+    reasons = _verification_type(packet, state, result, scopes, person, e)
+    if not e.payload.get("values"):
+        reasons.append("That document has no values to accept.")
+    return reasons
+
+
 def _adjust(packet, state, result, scopes, person, e) -> list[str]:
     reasons = []
     if not e.reason:
@@ -160,16 +178,36 @@ def _set_standard(packet, state, result, scopes, person, e) -> list[str]:
 
 
 def _disposition(packet, state, result, scopes, person, e) -> list[str]:
+    """Disposition comes first (D2): say what the document is to the return, and why."""
     reasons = []
-    if e.payload.get("disposition") not in DISPOSITIONS:
+    value = e.payload.get("disposition")
+    if value not in DISPOSITIONS:
         reasons.append(f"Disposition must be one of: {', '.join(sorted(DISPOSITIONS))}.")
-    if any(t not in packet.documents for t in e.targets):
+    if not e.targets or any(t not in packet.documents for t in e.targets):
         reasons.append("A disposition targets documents.")
+    if not e.reason:
+        reasons.append("A disposition needs a reason.")
+    if value == "duplicate" and e.payload.get("of") not in packet.documents:
+        reasons.append("A duplicate names the document it copies (of).")
+    if value == "superseded" and e.payload.get("by") not in packet.documents:
+        reasons.append("A superseded document names the document that replaces it (by).")
+    if value == "partial":
+        pages = e.payload.get("pages") or []
+        known = {p["page"] for t in e.targets if t in packet.documents for p in packet.documents[t]["pages"]}
+        if not pages or not set(pages) <= known:
+            reasons.append("A partial disposition lists the pages it covers (pages).")
     return reasons
 
 
 def _text_required(packet, state, result, scopes, person, e) -> list[str]:
     return [] if (e.payload.get("text") or "").strip() else ["Write the note."]
+
+
+def _note(packet, state, result, scopes, person, e) -> list[str]:
+    reasons = _text_required(packet, state, result, scopes, person, e)
+    if not e.targets:
+        reasons.append("Say what the note is about.")
+    return reasons
 
 
 def _question(packet, state, result, scopes, person, e) -> list[str]:
@@ -191,8 +229,8 @@ def _answer(packet, state, result, scopes, person, e) -> list[str]:
 
 CHECKS = {
     "sign_off": _sign_off,
-    "verify": _verification_type,
-    "accept_document": _verification_type,
+    "verify": _verify,
+    "accept_document": _accept_document,
     "adjust": _adjust,
     "judgment_call": _judgment_call,
     "undo": _undo,
@@ -201,8 +239,8 @@ CHECKS = {
     "partner_release": _partner_release,
     "set_standard": _set_standard,
     "disposition": _disposition,
-    "note": _text_required,
-    "review_note": _text_required,
+    "note": _note,
+    "review_note": _note,
     "question": _question,
     "answer": _answer,
 }

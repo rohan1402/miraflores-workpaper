@@ -67,27 +67,38 @@ class UnmaskIn(BaseModel):
 class Snapshots:
     """project() and the checker are pure, so their result only changes when the workpaper changes.
 
-    One unmasked projection, masked on the way out. It is keyed on the content tip: the newest
-    event that is not an unmask record, so viewing an SSN does not rebuild the return.
+    Unmasked projections, masked on the way out. Each is keyed on the content tip (the newest
+    event that is not an unmask record, so viewing an SSN does not rebuild the return) and on
+    the replay date, if any. A few recent replay dates are kept.
     """
+
+    KEEP = 8
 
     def __init__(self, packet: Packet, store: EventStore):
         self.packet, self.store = packet, store
         self._lock = threading.Lock()
-        self._tip = -1
-        self._state: State | None = None
-        self._result: CheckResult | None = None
+        self._cache: dict[tuple[int, str | None], tuple[State, CheckResult]] = {}
         self.builds = 0
 
-    def get(self) -> tuple[State, CheckResult]:
+    def get(self, as_of: str | None = None) -> tuple[State, CheckResult]:
         with self._lock:
-            tip = self.store.content_tip()
-            if tip != self._tip:
-                self._state = project(self.packet, self.store.all())
-                self._result = run_checker(self.packet, self._state)
-                self._tip = tip
+            key = (self.store.content_tip(), as_of)
+            if key not in self._cache:
+                state = project(self.packet, self.store.all(), as_of=as_of)
+                self._cache[key] = (state, run_checker(self.packet, state))
                 self.builds += 1
-            return self._state, self._result
+                while len(self._cache) > self.KEEP:
+                    self._cache.pop(next(iter(self._cache)))
+            return self._cache[key]
+
+
+def replay_date(as_of: str | None) -> str | None:
+    """'2026-03-20' means the end of that day; a full timestamp is used as given."""
+    if not as_of:
+        return None
+    if len(as_of) == 10:
+        return f"{as_of}T23:59:59Z"
+    return as_of
 
 
 def create_app(packet_path: Path | str = PACKET_PATH, db_path: Path | str | None = None,
@@ -179,41 +190,65 @@ def create_app(packet_path: Path | str = PACKET_PATH, db_path: Path | str | None
 
     # ---- reading the workpaper ------------------------------------------------
 
+    # Every read takes ?as_of=YYYY-MM-DD to replay the season: the version, documents, agency
+    # records and people's acts as they stood at the end of that day. Writes always happen now.
+
     @app.get("/api/return")
-    def the_return(person: dict = Depends(workpaper_reader)):
-        state, result = snapshots.get()
+    def the_return(as_of: str | None = None, person: dict = Depends(workpaper_reader)):
+        state, result = snapshots.get(replay_date(as_of))
         return views.home(packet, state, result, scopes, person)
 
     @app.get("/api/areas/{area}")
-    def area(area: str, person: dict = Depends(workpaper_reader)):
+    def area(area: str, as_of: str | None = None, person: dict = Depends(workpaper_reader)):
         if area not in SIGNED_SCOPES:
             raise HTTPException(404, f"No area {area}.")
-        state, result = snapshots.get()
+        state, result = snapshots.get(replay_date(as_of))
         return views.area_view(packet, state, result, scopes, area)
 
     @app.get("/api/lines/{key}")
-    def line(key: str, person: dict = Depends(workpaper_reader)):
-        state, result = snapshots.get()
+    def line(key: str, as_of: str | None = None, person: dict = Depends(workpaper_reader)):
+        state, result = snapshots.get(replay_date(as_of))
         if key not in state.lines:
             raise HTTPException(404, f"No line {key} on {state.version_id}.")
         return views.line_trace(packet, state, result, key)
 
     @app.get("/api/documents")
-    def documents(person: dict = Depends(workpaper_reader)):
-        state, result = snapshots.get()
+    def documents(as_of: str | None = None, person: dict = Depends(workpaper_reader)):
+        state, result = snapshots.get(replay_date(as_of))
         return views.document_index(packet, state, result, scopes)
 
     @app.get("/api/documents/{doc_id}")
-    def document(doc_id: str, person: dict = Depends(workpaper_reader)):
+    def document(doc_id: str, as_of: str | None = None, person: dict = Depends(workpaper_reader)):
         if doc_id not in packet.documents:
             raise HTTPException(404, f"No document {doc_id}.")
-        state, result = snapshots.get()
+        state, result = snapshots.get(replay_date(as_of))
         return views.document_view(packet, state, result, scopes, doc_id)
 
     @app.get("/api/findings")
-    def findings(area: str | None = None, status: str | None = None, person: dict = Depends(workpaper_reader)):
-        _, result = snapshots.get()
-        return views.findings_view(result, scopes, area=area, status=status)
+    def findings(area: str | None = None, status: str | None = None, as_of: str | None = None,
+                 person: dict = Depends(workpaper_reader)):
+        state, result = snapshots.get(replay_date(as_of))
+        return views.findings_view(state, result, scopes, area=area, status=status)
+
+    @app.get("/api/timeline")
+    def timeline(person: dict = Depends(workpaper_reader)):
+        """The season as scripted in the packet, with every person's act, in time order."""
+        state, _ = snapshots.get()
+        return views.timeline(packet, state)
+
+    @app.get("/api/history")
+    def history(ref: str, as_of: str | None = None, person: dict = Depends(workpaper_reader)):
+        """Every act on a line, document, value or finding, with what is undone marked."""
+        state, _ = snapshots.get(replay_date(as_of))
+        return views.history(packet, state, ref)
+
+    @app.get("/api/estimate")
+    def estimate_change(line: str, to: float, person: dict = Depends(workpaper_reader)):
+        """Preview an adjustment's estimated tax effect before saving it. Nothing is written."""
+        state, _ = snapshots.get()
+        if line not in state.lines:
+            raise HTTPException(404, f"No line {line} on {state.version_id}.")
+        return views.estimate_preview(state, line, to)
 
     @app.get("/api/checker/summary")
     def checker_summary(person: dict = Depends(workpaper_reader)):

@@ -2,6 +2,9 @@
 import { useApi } from "../api.js";
 import { ErrorBox, Estimate, HumanBadge, Loading, MachineBadge } from "../components/common.jsx";
 import FindingCard from "../components/FindingCard.jsx";
+import History from "../components/History.jsx";
+import { ActionBar, useCan } from "../components/Act.jsx";
+import { AdjustForm, AttachForm, NoteForm, QuestionForm, VerifyForm } from "../components/Forms.jsx";
 import PageText, { printedValue, valueNeedles } from "../components/PageText.jsx";
 import { LineTable } from "./Area.jsx";
 import { date, dateTime, figure, money, VERIFICATION_LABEL } from "../format.js";
@@ -14,6 +17,7 @@ export default function Line({ lineKey, names, refreshKey }) {
   if (!data) return <Loading />;
   const { line, rule, note, inputs, used_by: usedBy, sources, pages, versions, adjustments, verifications, findings, scopes } = data;
   const otherSources = sources.filter((s) => s.kind !== "document_value");
+  const tip = data.meta.tip;
   const label = (id) => areas.find((a) => a.id === id)?.label || id;
 
   return (
@@ -61,11 +65,13 @@ export default function Line({ lineKey, names, refreshKey }) {
         </div>
       </div>
 
+      <LineActions line={line} tip={tip} />
+
       {findings.length > 0 && (
         <section>
           <h2>What the checker found</h2>
           {findings.map((f) => (
-            <FindingCard key={f.id} finding={f} names={names} />
+            <FindingCard key={f.id} finding={f} tip={tip} />
           ))}
         </section>
       )}
@@ -157,6 +163,8 @@ export default function Line({ lineKey, names, refreshKey }) {
         </section>
       )}
 
+      <History refId={`line:${line.key}`} tip={tip} refreshKey={refreshKey} />
+
       {verifications.length > 0 && (
         <section>
           <h2>Verified by people</h2>
@@ -209,6 +217,29 @@ function CitedPage({ page }) {
         </div>
       )}
     </div>
+  );
+}
+
+function LineActions({ line, tip }) {
+  const can = useCan();
+  const target = `line:${line.key}`;
+  return (
+    <ActionBar
+      actions={[
+        { key: "verify", label: "Verify", allowed: can("verify"),
+          render: (done) => <VerifyForm targets={[target]} tip={tip} what={`${line.key} as it stands now`} onDone={done} /> },
+        { key: "adjust", label: "Adjust", allowed: can("adjust") && typeof line.value === "number",
+          render: (done) => <AdjustForm line={line.key} current={line.value} tip={tip} onDone={done} /> },
+        { key: "note", label: "Note", allowed: can("note"),
+          render: (done) => <NoteForm targets={[target]} tip={tip} onDone={done} /> },
+        { key: "review", label: "Review note", allowed: can("review_note"),
+          render: (done) => <NoteForm targets={[target]} tip={tip} review onDone={done} /> },
+        { key: "ask", label: "Ask", allowed: can("question"),
+          render: (done) => <QuestionForm targets={[target]} tip={tip} onDone={done} /> },
+        { key: "attach", label: "Attach evidence", allowed: can("attach_evidence"),
+          render: (done) => <AttachForm targets={[target]} tip={tip} onDone={done} /> },
+      ]}
+    />
   );
 }
 

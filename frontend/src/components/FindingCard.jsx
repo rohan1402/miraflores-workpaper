@@ -1,9 +1,15 @@
 // One checker finding: what is wrong, the proof, the proposed change and its estimated effect.
 import { Estimate, MachineBadge, Ref, SeverityDot } from "./common.jsx";
+import { ActionBar, useCan } from "./Act.jsx";
+import { AdjustForm, AttachForm, JudgmentForm, NoteForm, QuestionForm } from "./Forms.jsx";
 import { figure, money } from "../format.js";
 
-export default function FindingCard({ finding }) {
+export default function FindingCard({ finding, tip }) {
   const f = finding;
+  const can = useCan();
+  // The fix the finding proposes, when it is a new figure for a line that exists.
+  const fix = f.changes.find((c) => c.from !== null && typeof c.to === "number" && !c.counted_in);
+  const open = f.status === "open" && tip !== undefined;
   return (
     <article className={`finding sev-${f.severity} status-${f.status}`}>
       <header>
@@ -69,6 +75,32 @@ export default function FindingCard({ finding }) {
           ({s.line}). Not added again.
         </div>
       ))}
+      {open && (
+        <ActionBar
+          actions={[
+            {
+              key: "fix", label: "Fix with an adjustment", primary: true, allowed: Boolean(fix) && can("adjust"),
+              render: (done) => <AdjustForm line={fix.line} current={fix.from} suggested={fix.to} finding={f.id} tip={tip} onDone={done} />,
+            },
+            {
+              key: "accept", label: "Accept as is", allowed: can("judgment_call"),
+              render: (done) => <JudgmentForm finding={f.id} tip={tip} onDone={done} />,
+            },
+            {
+              key: "note", label: "Note", allowed: can("note"),
+              render: (done) => <NoteForm targets={[`finding:${f.id}`]} tip={tip} onDone={done} />,
+            },
+            {
+              key: "ask", label: "Ask", allowed: can("question"),
+              render: (done) => <QuestionForm targets={[`finding:${f.id}`, ...f.targets.slice(0, 1)]} tip={tip} onDone={done} />,
+            },
+            {
+              key: "attach", label: "Attach evidence", allowed: can("attach_evidence"),
+              render: (done) => <AttachForm targets={[`finding:${f.id}`]} tip={tip} onDone={done} />,
+            },
+          ]}
+        />
+      )}
     </article>
   );
 }

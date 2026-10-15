@@ -58,7 +58,7 @@ export default function Findings({ params, refreshKey }) {
             <span className="muted">{rule}</span> {title} <span className="muted small">{list.length}</span>
           </h2>
           {list.map((f) => (
-            <FindingCard key={f.id} finding={f} />
+            <FindingCard key={f.id} finding={f} tip={data.meta.tip} />
           ))}
         </section>
       ))}
