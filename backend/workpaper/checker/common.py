@@ -42,7 +42,8 @@ class Change:
     proposed: object
     component: str
     effect: Effect | None = None
-    counted_in: str | None = None   # set when another finding already counts these same dollars
+    counted_in: str | None = None        # set when another finding already counts these same dollars
+    counted_in_title: str | None = None  # that finding's title, for people to read
 
     @property
     def delta(self) -> float:
@@ -50,7 +51,8 @@ class Change:
 
     def as_dict(self) -> dict:
         return {"line": self.line, "from": self.original, "to": self.proposed, "component": self.component,
-                "effect": self.effect.as_dict() if self.effect else None, "counted_in": self.counted_in}
+                "effect": self.effect.as_dict() if self.effect else None, "counted_in": self.counted_in,
+                "counted_in_title": self.counted_in_title}
 
 
 @dataclass
@@ -85,7 +87,7 @@ class Finding:
     def shared(self) -> list[dict]:
         """Pieces whose dollars are already counted in another finding (the same payment, found twice)."""
         return [{"line": c.line, "component": c.component, "counted_in": c.counted_in,
-                 "effect": c.effect.as_dict() if c.effect else None}
+                 "counted_in_title": c.counted_in_title, "effect": c.effect.as_dict() if c.effect else None}
                 for c in self.changes if c.counted_in is not None and c.effect is not None]
 
     def as_dict(self) -> dict:

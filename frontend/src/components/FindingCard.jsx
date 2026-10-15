@@ -41,7 +41,11 @@ export default function FindingCard({ finding }) {
                 <td className="num">{c.to === null ? "removed" : figure(c.to, c.line)}</td>
                 <td className="muted small">
                   corrects {c.component}
-                  {c.counted_in && <span className="tag">counted in {c.counted_in}</span>}
+                  {c.counted_in && (
+                    <span className="tag" data-finding={c.counted_in}>
+                      counted in “{c.counted_in_title}”
+                    </span>
+                  )}
                 </td>
               </tr>
             ))}
@@ -59,7 +63,10 @@ export default function FindingCard({ finding }) {
         // The same dollars found by two checks: shown once, in the finding that found them first.
         <div key={i} className="effect small shared">
           Tax effect: the same {sharedAmount(s.effect)} on {s.line} is already counted in{" "}
-          <Ref value={s.counted_in}>{s.counted_in}</Ref>. Not added again.
+          <span className="strong" data-finding={s.counted_in}>
+            “{s.counted_in_title}”
+          </span>{" "}
+          ({s.line}). Not added again.
         </div>
       ))}
     </article>

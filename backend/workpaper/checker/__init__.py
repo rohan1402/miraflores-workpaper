@@ -131,6 +131,7 @@ def build_corrections(findings: list[Finding]) -> tuple[dict, dict]:
     """
     pieces: dict[tuple[str, str], Change] = {}
     found_by: dict[tuple[str, str], list[str]] = {}
+    titles = {f.id: f.title for f in findings}
     disagreements = []
     for f in findings:
         for c in f.changes:
@@ -138,6 +139,7 @@ def build_corrections(findings: list[Finding]) -> tuple[dict, dict]:
             if key in pieces:
                 found_by[key].append(f.id)
                 c.counted_in = found_by[key][0]   # the card shows "same dollars, counted there"
+                c.counted_in_title = titles[c.counted_in]
                 if abs(pieces[key].delta - c.delta) > 0.005:
                     disagreements.append({"line": c.line, "component": c.component, "findings": list(found_by[key])})
                 continue

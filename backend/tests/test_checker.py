@@ -64,6 +64,7 @@ def test_the_same_payment_found_twice_is_counted_in_one_card(result):
     assert first.effect.california == 3500
     assert second.effect is None
     assert second.shared == [{"line": "F540NR.72", "component": "ev-1075", "counted_in": first.id,
+                              "counted_in_title": "Payments do not agree with the agency record",
                               "effect": second.changes[0].effect.as_dict()}]
 
 
