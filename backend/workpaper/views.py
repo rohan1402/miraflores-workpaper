@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 
-from .areas import CALIFORNIA, SIGNED_SCOPES, lines_in_area
+from .areas import CALIFORNIA, SIGNED_SCOPES, lines_in_area, scopes_of_line
 from .checker import RULES, CheckResult
 from .checker.r10_prior_year_variance import prior_line_key
 from .concurrency import ConflictRule
@@ -229,6 +229,7 @@ def line_trace(packet: Packet, state: State, result: CheckResult, key: str) -> d
     return {
         "meta": meta(state),
         "line": line_row(packet, state, result, key, by_line),
+        "scopes": sorted(scopes_of_line(key, line)),   # its area, and California if it rests on California evidence
         "rule": {"id": line["rule"], "description": engine_rules.get(line["rule"])},
         "note": line.get("note"),
         "inputs": [line_row(packet, state, result, k, by_line) for k in line["inputs"] if k in state.lines],

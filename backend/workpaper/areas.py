@@ -175,6 +175,7 @@ def california_fields(values: dict[str, dict], lines: dict[str, dict]) -> set[st
 
 def lines_in_area(lines: dict[str, dict], area: str) -> list[str]:
     """The lines a sign-off on `area` (a work area, the California lens, or the return) covers."""
+    # In the version's own order, which follows the forms (SchC.1, SchC.8, SchC.9 ... not SchC.1, SchC.11).
     if area == CALIFORNIA:
-        return sorted(key for key, line in lines.items() if in_california_lens(line))
-    return sorted(key for key in lines if area_of_line(key) == area)
+        return [key for key, line in lines.items() if in_california_lens(line)]
+    return [key for key in lines if area_of_line(key) == area]

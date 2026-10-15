@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "workpaper",
+      "runtimeExecutable": ".venv/bin/uvicorn",
+      "runtimeArgs": ["workpaper.api:app", "--app-dir", "backend", "--port", "8000", "--reload", "--reload-dir", "backend"],
+      "port": 8000
+    },
+    {
+      "name": "frontend-dev",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--prefix", "frontend"],
+      "port": 5173
+    }
+  ]
+}

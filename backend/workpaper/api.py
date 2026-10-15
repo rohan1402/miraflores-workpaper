@@ -24,6 +24,7 @@ from pathlib import Path
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import views
@@ -39,6 +40,7 @@ from .project import State, project
 from .roles import can_unmask, home_config, is_staff, people, verbs
 
 DEFAULT_DB = REPO_ROOT / "var" / "workpaper.db"
+FRONTEND_DIST = REPO_ROOT / "frontend" / "dist"
 COOKIE = "wp_person"
 
 
@@ -352,6 +354,11 @@ def create_app(packet_path: Path | str = PACKET_PATH, db_path: Path | str | None
 
         return StreamingResponse(body(), media_type="text/event-stream",
                                  headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+    # ---- the frontend (one process, one link) ---------------------------------
+    # Registered last, so every /api route above wins. The built files hold no client data.
+    if FRONTEND_DIST.exists():
+        app.mount("/", StaticFiles(directory=FRONTEND_DIST, html=True), name="frontend")
 
     return app
 
