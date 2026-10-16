@@ -442,3 +442,5 @@ th.pick, td.pick { width: 28px; padding-right: 0 !important; }
 .client-nav { padding-top: 1rem; }
 tr.total td { font-weight: 600; border-top: 1px solid var(--line); }
 @media (max-width: 720px) { .searchbox input { width: 120px; } }
+.moved { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.to-pay { border-left: 3px solid var(--accent); padding-left: .6rem; margin-bottom: .6rem; }

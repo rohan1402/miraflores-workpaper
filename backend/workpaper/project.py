@@ -192,7 +192,7 @@ def project(packet: Packet, events: list[Event], as_of: str | None = None) -> St
     # An undo reverses its target. Collect them first so the target is skipped on replay.
     state.undone = {
         _event_id(t) for e in applied if e.action == "undo" for t in e.targets if t.startswith("event:")
-    }
+    } - {None}
     for e in applied:
         if e.id in state.undone or e.action == "undo":
             continue
@@ -220,8 +220,11 @@ def _same(a, b) -> bool:
     return a == b
 
 
-def _event_id(ref: str) -> int:
-    return int(ref[len("event:"):])
+def _event_id(ref: str) -> int | None:
+    """'event:12' -> 12. A malformed reference reads as nothing, so one bad event in the append-only
+    log can never stop the replay (the door refuses them; this is defense in depth, D35)."""
+    number = ref[len("event:"):] if ref.startswith("event:") else ""
+    return int(number) if number.isascii() and number.isdigit() else None
 
 
 def _act(e: Event) -> dict:
@@ -280,7 +283,7 @@ def _apply_review_note(state: State, e: Event) -> None:
 
 def _apply_resolve_review_note(state: State, e: Event) -> None:
     for t in e.targets:
-        note = state.review_notes.get(_event_id(t))
+        note = state.review_notes.get(_event_id(t))   # None for a malformed reference: no note
         if note is not None:
             note.resolved = Act(**_act(e))
             note.resolution = e.payload.get("text") or e.reason
@@ -310,7 +313,8 @@ def _apply_partner_release(state: State, e: Event) -> None:
 
 def _apply_approve_adjustment(state: State, e: Event) -> None:
     for t in e.targets:
-        state.partner_approvals[_event_id(t)] = Act(**_act(e))
+        if (adjustment_id := _event_id(t)) is not None:
+            state.partner_approvals[adjustment_id] = Act(**_act(e))
 
 
 def _apply_set_standard(state: State, e: Event) -> None:
@@ -436,12 +440,13 @@ def large_acceptances(state: State) -> list[dict]:
     it must reach the partner: the release lists it. The latest judgment on a finding counts."""
     found: dict[str, dict] = {}
     for r in state.records:
-        if r.action != "judgment_call" or not (r.payload.get("authority") or "").strip():
+        authority = r.payload.get("authority")
+        if r.action != "judgment_call" or not (isinstance(authority, str) and authority.strip()):
             continue
         effect = r.payload.get("effect") or {}
         if abs(effect.get("federal", 0)) > PARTNER_THRESHOLD or abs(effect.get("california", 0)) > PARTNER_THRESHOLD:
             ids = [t[len("finding:"):] for t in r.targets if t.startswith("finding:")]
-            for finding_id in ids + ([r.payload["finding"]] if r.payload.get("finding") else []):
+            for finding_id in ids + ([r.payload["finding"]] if isinstance(r.payload.get("finding"), str) else []):
                 found[finding_id] = {"id": finding_id, "event": r.event_id, "by": r.actor,
                                      "decision": r.payload.get("decision"), "authority": r.payload.get("authority"),
                                      "federal": effect.get("federal", 0), "california": effect.get("california", 0)}

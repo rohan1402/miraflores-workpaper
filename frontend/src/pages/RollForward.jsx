@@ -58,7 +58,7 @@ export default function RollForward({ names, refreshKey }) {
         <h2>Assets at the end of 2025</h2>
         <table className="lines compact">
           <thead>
-            <tr><th>Asset</th><th>In service</th><th>Method</th><th className="num">Cost</th><th className="num">Federal accumulated</th><th className="num">California accumulated</th><th /></tr>
+            <tr><th>Asset</th><th>In service</th><th>Method</th><th className="num">Cost</th><th className="num">Federal accumulated</th><th className="num">California accumulated</th><th className="num">AMT difference 2025</th><th /></tr>
           </thead>
           <tbody>
             {data.assets.map((a) => (
@@ -69,6 +69,7 @@ export default function RollForward({ names, refreshKey }) {
                 <td className="num">{money(a.cost)}</td>
                 <td className="num">{money(a.federal_accumulated, { cents: true })}</td>
                 <td className="num">{money(a.california_accumulated, { cents: true })}</td>
+                <td className="num">{money(a.amt_difference_2025, { cents: true })}</td>
                 <td className="small">{a.carried ? "carried to 2026" : "disposed of in 2025"}</td>
               </tr>
             ))}
@@ -80,7 +81,7 @@ export default function RollForward({ names, refreshKey }) {
         <h2>2026 estimated payments <Estimate /></h2>
         <div className="home-grid">
           <Plan title="Federal" plan={data.estimates.federal} />
-          <Plan title="California" plan={data.estimates.california} names={names} tip={me?.tip} california />
+          <CaliforniaPlan plan={data.estimates.california} names={names} tip={me?.tip} />
         </div>
         <h3>Known changes for 2026</h3>
         <ul className="plain small">
@@ -112,9 +113,13 @@ function Carryovers({ title, rows }) {
               <td className="refs">{[...c.lines.map((k) => `line:${k}`), ...c.sources].map((r) => <Ref key={r} value={r} />)}</td>
               <td className="small">
                 {c.moved ? (
-                  <span className="tag warn" title={[...c.moved.adjusted, ...c.moved.open_corrections].join(", ")}>
-                    {c.moved.why} ({c.moved.adjusted.length + c.moved.open_corrections.length} lines)
-                  </span>
+                  <>
+                    <span className="tag warn">{c.moved.why}</span>
+                    {c.moved.adjusted.length > 0 && <div className="moved">adjusted: {c.moved.adjusted.join(", ")}</div>}
+                    {c.moved.open_corrections.length > 0 && (
+                      <div className="moved">open corrections: {c.moved.open_corrections.join(", ")}</div>
+                    )}
+                  </>
                 ) : (
                   <span className="muted">as the engine computed it</span>
                 )}
@@ -127,8 +132,7 @@ function Carryovers({ title, rows }) {
   );
 }
 
-function Plan({ title, plan, names, tip, california }) {
-  const can = useCan();
+function Plan({ title, plan }) {
   return (
     <div className="card">
       <h3>{title}</h3>
@@ -136,29 +140,57 @@ function Plan({ title, plan, names, tip, california }) {
       <p className="small">
         {Math.round(plan.percent * 100)}% of 2025 total tax {money(plan.base_total_tax_2025)} = <strong>{money(plan.annual)}</strong>
       </p>
-      <ul className="plain small">
-        {plan.installments.map((i) => (
-          <li key={i.due} className={i.passed ? "muted" : ""}>
-            {date(`${i.due}T12:00:00Z`)}: {money(i.amount)} {i.passed && <span className="tag">due date passed</span>}
-          </li>
-        ))}
-      </ul>
-      {california && (
-        <>
-          {plan.decision ? (
-            <p className="small">
-              <strong>Method chosen:</strong> {plan.decision.decision} (authority: {plan.decision.authority}),{" "}
-              {names[plan.decision.by] || plan.decision.by}, {dateTime(plan.decision.at)}.
-            </p>
-          ) : (
-            <p className="small muted">No method chosen yet. The 110% plan above likely overpays: in 2026 California taxes only California-source income.</p>
-          )}
-          <ActionBar actions={[
-            { key: "decide", label: plan.decision ? "Change the method" : "Record the method", allowed: can("judgment_call"),
-              render: (done) => <PlanDecisionForm planRef={plan.plan_ref} tip={tip} onDone={done} /> },
-          ]} />
-        </>
-      )}
+      <Schedule installments={plan.installments} />
     </div>
+  );
+}
+
+// California (D32): the safe harbor is always shown; what to pay follows the firm's recorded choice.
+function CaliforniaPlan({ plan, names, tip }) {
+  const can = useCan();
+  const chosen = plan.chosen;
+  return (
+    <div className="card">
+      <h3>California</h3>
+      <p className="small">{plan.rule}</p>
+      {chosen ? (
+        <div className="to-pay">
+          <p className="small">
+            <strong>To pay:</strong>{" "}
+            {chosen.method === "projected"
+              ? <>90% of projected 2026 California tax {money(chosen.projected_2026_tax)} = <strong>{money(chosen.annual)}</strong></>
+              : <>the safe harbor below, <strong>{money(chosen.annual)}</strong></>}
+          </p>
+          {chosen.method === "projected" && <Schedule installments={chosen.installments} />}
+          <p className="small muted">
+            {chosen.decision} (authority: {chosen.authority}), {names[chosen.by] || chosen.by}, {dateTime(chosen.at)}.
+          </p>
+        </div>
+      ) : (
+        <p className="small"><strong>No method chosen yet.</strong> Nothing is marked as the amount to pay.</p>
+      )}
+      <p className="small">
+        Safe harbor: {Math.round(plan.percent * 100)}% of 2025 California tax {money(plan.base_total_tax_2025)} ={" "}
+        <strong>{money(plan.safe_harbor.annual)}</strong>
+      </p>
+      <Schedule installments={plan.safe_harbor.installments} />
+      {plan.overpay_note && <p className="small warn">{plan.overpay_note}</p>}
+      <ActionBar actions={[
+        { key: "decide", label: chosen ? "Change the method" : "Record the method", allowed: can("judgment_call"),
+          render: (done) => <PlanDecisionForm planRef={plan.plan_ref} tip={tip} onDone={done} /> },
+      ]} />
+    </div>
+  );
+}
+
+function Schedule({ installments }) {
+  return (
+    <ul className="plain small">
+      {installments.map((i) => (
+        <li key={i.due} className={i.passed ? "muted" : ""}>
+          {date(`${i.due}T12:00:00Z`)}: {money(i.amount)} {i.passed && <span className="tag">due date passed</span>}
+        </li>
+      ))}
+    </ul>
   );
 }

@@ -11,7 +11,9 @@ A stale view is not checked here; the event store refuses it with 409 (concurren
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
+from datetime import date
 
 from . import notices
 from .areas import RETURN, SIGNED_SCOPES
@@ -25,6 +27,8 @@ from .project import (
     DISPOSITIONS, State, adjustment_payload, large_adjustments, release_blockers, signoff_payload,
 )
 from .roles import ROLE_ACTIONS, SIGN_LEVEL
+from .rollforward import CALIFORNIA_METHODS, PLAN_CALIFORNIA, usable_plan
+from .taxeffect import is_amount
 
 
 @dataclass
@@ -38,7 +42,12 @@ def prepare(packet: Packet, state: State, result: CheckResult, scopes: ConflictR
     """Build the event the log will store. Raises Refusal(403) if the role may not act at all."""
     if action not in ROLE_ACTIONS.get(person["role"], set()):
         raise Refusal(403, [f"{person['name']} ({person['role']}) may not {action.replace('_', ' ')}"])
-    p = dict(payload or {})
+    malformed = [t for t in targets if not well_formed(t)]
+    if malformed:
+        raise Refusal(422, [f"Not a reference the workpaper knows: {', '.join(map(repr, malformed))}."])
+    if reason is not None and not _is(TEXT, reason):
+        raise Refusal(422, ["The reason must be text."])
+    p = _clean(action, payload or {})
     if action == "adjust":
         key = _one(targets, "line")[len("line:"):]
         adds = None
@@ -64,6 +73,8 @@ def prepare(packet: Packet, state: State, result: CheckResult, scopes: ConflictR
              "values": {t: _current_value(packet, state, t) for t in targets}}
     elif action == "judgment_call":
         p["effect"] = _accepted_effect(result, targets, p.get("finding"))
+        if PLAN_CALIFORNIA in targets and usable_plan(p) and p.get("method") == "projected":
+            p["projected_2026_tax"] = int(p["projected_2026_tax"])
     elif action == "correct_identity":
         person_id = _one(targets, "person")[len("household:"):]
         p = {"person": person_id, "document": p.get("document"), **({"finding": p["finding"]} if p.get("finding") else {})}
@@ -83,6 +94,8 @@ def prepare(packet: Packet, state: State, result: CheckResult, scopes: ConflictR
         p = notices.package(packet, state, notice) if notice else {}
     elif action == "log_time":
         p = {"hours": p.get("hours"), "on": p.get("on"), "text": (p.get("text") or "").strip()}
+    elif action == "resolve_review_note":
+        _one(targets, "event")
     elif action == "undo":
         target = next((e for e in state.events if f"event:{e.id}" == _one(targets, "event")), None)
         p = {"undoes": {"action": target.action, "targets": list(target.targets)} if target else {}}
@@ -93,7 +106,8 @@ def prepare(packet: Packet, state: State, result: CheckResult, scopes: ConflictR
 def validate(packet: Packet, state: State, result: CheckResult, scopes: ConflictRule,
              person: dict, event: Event) -> None:
     """Apply the firm's rules to a prepared event. Raises Refusal(422) with every reason that applies."""
-    planning = event.action == "judgment_call" and event.targets and all(ref_kind(t) == "plan" for t in event.targets)
+    planning = (event.action == "judgment_call" and event.targets and "finding" not in event.payload
+                and all(ref_kind(t) == "plan" for t in event.targets))
     if event.action in FROZEN_REFUSES and not planning and (status := filing_status(state))["frozen"]:
         raise Refusal(422, [f"The return was filed (event {status['filed'].event_id}) and is frozen. "
                             f"Open an amendment to change it."])
@@ -182,18 +196,33 @@ def _adjust(packet, state, result, scopes, person, e) -> list[str]:
     reasons = []
     if not e.reason:
         reasons.append("An adjustment needs a reason.")
-    if not isinstance(e.payload.get("to"), (int, float)):
+    if not is_amount(e.payload.get("to")):
         reasons.append("An adjustment needs a numeric new figure.")
     return reasons
 
 
 def _judgment_call(packet, state, result, scopes, person, e) -> list[str]:
     reasons = []
-    if not (e.payload.get("authority") or "").strip():
+    if not _words(e.payload.get("authority")):
         reasons.append("Every judgment call records the authority relied on (firm rule).")
-    if not (e.payload.get("decision") or "").strip():
+    if not _words(e.payload.get("decision")):
         reasons.append("A judgment call needs the decision.")
+    if PLAN_CALIFORNIA in e.targets:
+        reasons += _california_plan(e.payload)
     return reasons
+
+
+def _california_plan(payload: dict) -> list[str]:
+    """The California 2026 method (D32): the safe harbor, or 90% of a projected 2026 California tax,
+    which must be given; the installments to pay are worked out from it."""
+    if "finding" in payload:
+        return ["A planning decision is about 2026; it answers no finding on the return."]
+    method = payload.get("method")
+    if not isinstance(method, str) or method not in CALIFORNIA_METHODS:
+        return ["Choose the method: the 110% safe harbor, or 90% of projected 2026 California tax."]
+    if not usable_plan(payload):
+        return ["The 90% method needs the projected 2026 California tax in whole dollars, zero or more."]
+    return []
 
 
 def _undo(packet, state, result, scopes, person, e) -> list[str]:
@@ -223,7 +252,9 @@ def _resolve_review_note(packet, state, result, scopes, person, e) -> list[str]:
 
 def _approve_adjustment(packet, state, result, scopes, person, e) -> list[str]:
     ids = {a.event_id for a in large_adjustments(state)}
-    return [] if int(e.targets[0][len("event:"):]) in ids else ["That is not an adjustment over the partner threshold."]
+    if not e.targets or any(ref_kind(t) != "event" or int(t[len("event:"):]) not in ids for t in e.targets):
+        return ["Approve adjustments over the partner threshold, each named as event:<id>."]
+    return []
 
 
 def _partner_release(packet, state, result, scopes, person, e) -> list[str]:
@@ -231,17 +262,22 @@ def _partner_release(packet, state, result, scopes, person, e) -> list[str]:
 
 
 def _set_standard(packet, state, result, scopes, person, e) -> list[str]:
+    path = e.payload.get("path")
     node = state.standards
-    for part in e.payload.get("path", "").split("."):
+    for part in path.split(".") if isinstance(path, str) else [None]:
         if not isinstance(node, dict) or part not in node:
-            return [f"There is no firm standard {e.payload.get('path')!r}."]
+            return [f"There is no firm standard {path!r}."]
         node = node[part]
+    if isinstance(node, dict):
+        return [f"Change one standard at a time: name a field inside {path}, such as {path}.{next(iter(node))}."]
     value = e.payload.get("value")
     reasons = [] if e.reason else ["A change to a firm standard needs a reason."]
-    if isinstance(node, (int, float)) and not (isinstance(value, (int, float)) and value >= 0):
+    if isinstance(node, (int, float)) and not (is_amount(value) and value >= 0):
         reasons.append("That standard is a number of zero or more.")
     elif isinstance(node, list) and not (isinstance(value, list) and value and all(isinstance(v, str) and v.strip() for v in value)):
         reasons.append("That standard is a list of entries, none of them empty.")
+    elif path == "verification_types" and not all(re.fullmatch(r"[a-z][a-z_]*", v) for v in value):
+        reasons.append("A verification type is a plain name in lower case with underscores, like agreed_to_source_document.")
     elif isinstance(node, str) and not (isinstance(value, str) and value.strip()):
         reasons.append("That standard is a sentence.")
     return reasons
@@ -291,11 +327,28 @@ def _notice_response(packet, state, result, scopes, person, e) -> list[str]:
     if notice is None:
         return ["There is no such notice (a notice about this return arrives only after it was accepted)."]
     reasons = []
-    if not isinstance(e.payload.get("item"), int) or not 0 <= e.payload["item"] < len(notices.items(notice)):
+    if type(e.payload.get("item")) is not int or not 0 <= e.payload["item"] < len(notices.items(notice)):
         reasons.append("Answer one of the items the notice lists.")
     if not e.payload.get("text"):
         reasons.append("Write the answer.")
+    unknown = [t for t in e.targets if not t.startswith("notice:") and not _evidence_exists(packet, state, t)]
+    if unknown:
+        reasons.append(f"Cite evidence that exists: {', '.join(unknown)} is not a line, document, client answer or attached file.")
     return reasons
+
+
+def _evidence_exists(packet, state, ref: str) -> bool:
+    kind = ref_kind(ref)
+    if kind == "line":
+        return ref[len("line:"):] in state.lines
+    if kind == "document":
+        return ref in packet.documents and state.document_visible(packet.documents[ref])
+    if kind == "client":
+        return ref in packet.client_items
+    if kind == "event":
+        number = ref[len("event:"):]
+        return number.isascii() and number.isdigit() and any(r.event_id == int(number) and r.action == "attach_evidence" for r in state.records)
+    return False
 
 
 def _release_notice_response(packet, state, result, scopes, person, e) -> list[str]:
@@ -313,7 +366,7 @@ def _log_time(packet, state, result, scopes, person, e) -> list[str]:
     if bucket not in packet.raw["firm"]["budget_hours"]:
         reasons.append(f"Log time to one of: {', '.join(packet.raw['firm']['budget_hours'])}.")
     hours = e.payload.get("hours")
-    if not isinstance(hours, (int, float)) or not 0 < hours <= 12:
+    if not is_amount(hours) or not 0 < hours <= 12:
         reasons.append("Hours are more than 0 and at most 12 per entry.")
     return reasons
 
@@ -417,6 +470,110 @@ def _accepted_effect(result: CheckResult, targets: list[str], finding: str | Non
     ids = [t[len("finding:"):] for t in targets if t.startswith("finding:")] + ([finding] if finding else [])
     effects = [f.effect for f in result.findings if f.id in ids and f.effect]
     return {"federal": sum(e.federal for e in effects), "california": sum(e.california for e in effects)}
+
+
+def _words(value) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
+# ---- the door: what an act may carry (D35) --------------------------------------------------
+# The log is append-only, so anything stored is replayed on every read, forever. Each act takes a
+# fixed set of keys from the browser, each of a fixed type. Keys an act does not take are dropped
+# (the server computes everything derived); a key of the wrong type is refused. Acts not listed
+# (undo, approve_adjustment, sign_8879, transmit, open_amendment, release_notice_response,
+# attach_evidence, view_sensitive) take nothing from the browser.
+TEXT, AMOUNT, INTEGER, FLAG, PAGES, DATE, STANDARD = "text", "amount", "integer", "flag", "pages", "date", "standard"
+PAYLOAD_KEYS = {
+    "disposition": {"disposition": TEXT, "of": TEXT, "by": TEXT, "pages": PAGES},
+    "accept_document": {"verification_type": TEXT, "at_summary": FLAG},
+    "verify": {"verification_type": TEXT},
+    "adjust": {"to": AMOUNT, "finding": TEXT},
+    "note": {"text": TEXT},
+    "review_note": {"text": TEXT},
+    "resolve_review_note": {"text": TEXT},
+    "question": {"text": TEXT, "to": TEXT},
+    "answer": {"text": TEXT},
+    "judgment_call": {"decision": TEXT, "authority": TEXT, "finding": TEXT, "method": TEXT,
+                      "projected_2026_tax": AMOUNT},
+    "sign_off": {"waiver": TEXT},
+    "partner_release": {"waiver": TEXT},
+    "set_standard": {"path": TEXT, "value": STANDARD},
+    "correct_identity": {"document": TEXT, "finding": TEXT},
+    "notice_response": {"item": INTEGER, "text": TEXT},
+    "log_time": {"hours": AMOUNT, "on": DATE, "text": TEXT},
+}
+LONGEST_TEXT = 20_000
+DESCRIBE = {TEXT: "text", AMOUNT: "a real amount (finite, less than 1,000,000,000,000,000)",
+            INTEGER: "a whole number", FLAG: "true or false", PAGES: "a list of page numbers",
+            DATE: "a date (2026-04-15)", STANDARD: "a number, a sentence or a list of entries"}
+
+
+def _clean(action: str, payload: dict) -> dict:
+    if not isinstance(payload, dict):
+        raise Refusal(422, ["The payload is an object of named fields."])
+    clean, wrong = {}, []
+    for key, kind in PAYLOAD_KEYS.get(action, {}).items():
+        if payload.get(key) is None:
+            continue
+        if _is(kind, payload[key]):
+            clean[key] = payload[key]
+        else:
+            what = "a finding id, such as ESTIMATES_VS_TRANSCRIPT:F1040.26" if key == "finding" else DESCRIBE[kind]
+            wrong.append(f"{key} must be {what}.")
+    if wrong:
+        raise Refusal(422, wrong)
+    return clean
+
+
+def _is(kind: str, value) -> bool:
+    if kind == TEXT:
+        return isinstance(value, str) and len(value) <= LONGEST_TEXT and _utf8(value)
+    if kind == AMOUNT:
+        return is_amount(value)
+    if kind == INTEGER:
+        return type(value) is int and is_amount(value)
+    if kind == FLAG:
+        return isinstance(value, bool)
+    if kind == PAGES:
+        return isinstance(value, list) and len(value) <= 1000 and all(type(v) is int and 0 < v < 10_000 for v in value)
+    if kind == DATE:
+        return isinstance(value, str) and len(value) == 10 and _is_date(value)
+    if kind == STANDARD:
+        return (is_amount(value) or _is(TEXT, value)
+                or (isinstance(value, list) and len(value) <= 1000 and all(_is(TEXT, v) for v in value)))
+    return False
+
+
+def _utf8(text: str) -> bool:
+    """A lone UTF-16 surrogate (the JSON escape \\ud800) is a Python str that cannot be written as
+    UTF-8: stored, it would break every response that carries it."""
+    try:
+        text.encode("utf-8")
+        return True
+    except UnicodeEncodeError:
+        return False
+
+
+def _is_date(value: str) -> bool:
+    try:
+        date.fromisoformat(value)
+        return True
+    except ValueError:
+        return False
+
+
+def well_formed(ref) -> bool:
+    """A target the workpaper knows how to read: a known kind, and numbers where it expects them."""
+    if not isinstance(ref, str) or not ref or len(ref) > 200 or not _utf8(ref):
+        return False
+    kind = ref_kind(ref)
+    if kind == "event":
+        number = ref[len("event:"):]
+        return number.isascii() and number.isdigit()   # "²" is a digit to isdigit(), not to int()
+    if kind == "page":
+        page = ref[len("doc:"):].partition("#page")[2]
+        return page.isascii() and page.isdigit()
+    return kind != "unknown"
 
 
 def _one(targets: list[str], kind: str) -> str:

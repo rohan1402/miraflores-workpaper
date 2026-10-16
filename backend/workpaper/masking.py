@@ -86,7 +86,8 @@ class Masker:
             for k, v in obj.items():
                 if isinstance(k, str) and k.lower().startswith("ssn") and isinstance(v, str):
                     out[k] = mask_ssn(v) if v else v
-                elif obj.get("value_type") in SENSITIVE_TYPES and k in ("value", "text_as_read") and v:
+                elif isinstance(obj.get("value_type"), str) and obj["value_type"] in SENSITIVE_TYPES \
+                        and k in ("value", "text_as_read") and v:
                     out[k] = self.text(str(v)) if str(v) in self.secrets else mask_account(str(v))
                 else:
                     out[k] = self(v)
@@ -107,7 +108,7 @@ def reveal(packet: Packet, ref: str):
         return person.get(field or "ssn") if person else None
     if ref.startswith("doc:") and "#page" in ref:
         doc_id, _, page = ref[len("doc:"):].partition("#page")
-        return packet.page_text(doc_id, int(page)) or None
+        return (packet.page_text(doc_id, int(page)) or None) if page.isascii() and page.isdigit() else None
     if ref == "household.bank_account":
         return packet.raw["household"].get("bank_account_for_refund_or_payment")
     return None

@@ -15,10 +15,12 @@ Run locally:  cd backend && ../.venv/bin/uvicorn workpaper.api:app --reload
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import threading
 from collections import Counter
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
@@ -38,6 +40,7 @@ from .masking import Masker, reveal
 from .packet import PACKET_PATH, REPO_ROOT, Packet, load_packet
 from .project import State, project
 from .roles import can_unmask, home_config, is_staff, people, verbs
+from .taxeffect import is_amount
 
 DEFAULT_DB = REPO_ROOT / "var" / "workpaper.db"
 FRONTEND_DIST = REPO_ROOT / "frontend" / "dist"
@@ -93,9 +96,13 @@ class Snapshots:
 
 
 def replay_date(as_of: str | None) -> str | None:
-    """'2026-03-20' means the end of that day; a full timestamp is used as given."""
+    """'2026-03-20' means the end of that day; a full timestamp is used as given. Anything else is a 422."""
     if not as_of:
         return None
+    try:
+        datetime.fromisoformat(as_of.replace("Z", "+00:00"))
+    except ValueError:
+        raise HTTPException(422, "as_of is a date (2026-03-20) or a timestamp.")
     if len(as_of) == 10:
         return f"{as_of}T23:59:59Z"
     return as_of
@@ -114,9 +121,11 @@ def create_app(packet_path: Path | str = PACKET_PATH, db_path: Path | str | None
     snapshots = Snapshots(packet, store)
 
     class MaskedJSON(JSONResponse):
-        """Every JSON response is masked on the way out. Only the unmask endpoint bypasses it."""
+        """Every JSON response is masked on the way out. Only the unmask endpoint bypasses it.
+        Written ASCII-escaped, so text that cannot be UTF-8 (a lone surrogate already in a log) still
+        goes out as valid JSON instead of failing the whole response (D35)."""
         def render(self, content) -> bytes:
-            return super().render(masker(content))
+            return json.dumps(masker(content), ensure_ascii=True, allow_nan=False, separators=(",", ":")).encode("ascii")
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -250,6 +259,8 @@ def create_app(packet_path: Path | str = PACKET_PATH, db_path: Path | str | None
     @app.get("/api/estimate")
     def estimate_change(line: str, to: float, person: dict = Depends(workpaper_reader)):
         """Preview an adjustment's estimated tax effect before saving it. Nothing is written."""
+        if not is_amount(to):
+            raise HTTPException(422, "The new figure must be a real amount.")
         state, result = snapshots.get()
         adds = None if line in state.lines else result.proposed_line(line)
         if line not in state.lines and adds is None:
@@ -269,7 +280,7 @@ def create_app(packet_path: Path | str = PACKET_PATH, db_path: Path | str | None
 
     @app.get("/api/events")
     def events(after: int = 0, person: dict = Depends(workpaper_reader)):
-        return [views.event_view(e) for e in store.after(after)]
+        return [views.event_view(e) for e in store.after(min(max(after, 0), store.tip()))]
 
     # ---- since I last looked --------------------------------------------------
 
@@ -299,6 +310,8 @@ def create_app(packet_path: Path | str = PACKET_PATH, db_path: Path | str | None
     def act(body: ActionIn, person: dict = Depends(current_person)):
         if body.action == "view_sensitive":
             raise Refusal(422, ["Unmask through /api/unmask, which logs the view."])
+        if body.action == "attach_evidence":
+            raise Refusal(422, ["Attach a file through /api/attachments, which stores the file."])
         state, result = snapshots.get()
         event = prepare(packet, state, result, scopes, person, body.action, body.targets, body.payload, body.reason,
                         body.base_tip)
@@ -332,6 +345,8 @@ def create_app(packet_path: Path | str = PACKET_PATH, db_path: Path | str | None
     @app.post("/api/attachments")
     def upload(file: UploadFile = File(...), targets: str = Form(...), note: str = Form(""),
                base_tip: int = Form(0), person: dict = Depends(current_person)):
+        if not 0 <= base_tip <= store.tip():
+            raise Refusal(422, ["base_tip is the newest event you have seen; it cannot be ahead of the log."])
         data = file.file.read()
         state, result = snapshots.get()
         refs = [t.strip() for t in targets.split(",") if t.strip()]
@@ -409,7 +424,7 @@ def create_app(packet_path: Path | str = PACKET_PATH, db_path: Path | str | None
         if not released:
             raise HTTPException(404, "Nothing has been released.")
         html = views_filing.export_html(released, packet.raw["firm"]["name"])
-        return HTMLResponse(html, headers={"Content-Disposition": 'attachment; filename="notice-response.html"'})
+        return HTMLResponse(_writable(html), headers={"Content-Disposition": 'attachment; filename="notice-response.html"'})
 
     # ---- rolling forward to 2026 (D30 to D33) --------------------------------
 
@@ -431,7 +446,7 @@ def create_app(packet_path: Path | str = PACKET_PATH, db_path: Path | str | None
     def roll_forward_export(person: dict = Depends(workpaper_reader)):
         from .rollforward import export_html
         html = export_html(masker(_rollforward_view(None)), packet.raw["firm"]["name"])
-        return HTMLResponse(html, headers={"Content-Disposition": 'attachment; filename="2026-opening.html"'})
+        return HTMLResponse(_writable(html), headers={"Content-Disposition": 'attachment; filename="2026-opening.html"'})
 
     # ---- the firm: time, standards, search ------------------------------------
 
@@ -468,7 +483,9 @@ def create_app(packet_path: Path | str = PACKET_PATH, db_path: Path | str | None
 
     @app.get("/api/stream")
     async def stream(request: Request, after: int | None = None, person: dict = Depends(current_person)):
-        last = after if after is not None else int(request.headers.get("last-event-id") or store.tip())
+        header = request.headers.get("last-event-id") or ""
+        last = after if after is not None else (int(header) if header.isascii() and header.isdigit() else store.tip())
+        last = min(max(last, 0), store.tip())
         queue = live.subscribe()
 
         async def backlog(last_id: int) -> list[dict]:
@@ -491,6 +508,11 @@ def create_app(packet_path: Path | str = PACKET_PATH, db_path: Path | str | None
         app.mount("/", StaticFiles(directory=FRONTEND_DIST, html=True), name="frontend")
 
     return app
+
+
+def _writable(text: str) -> str:
+    """An export is one UTF-8 file; anything that cannot be written as UTF-8 becomes a question mark."""
+    return text.encode("utf-8", errors="replace").decode("utf-8")
 
 
 def _visible(person: dict, event: dict) -> bool:

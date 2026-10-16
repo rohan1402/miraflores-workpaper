@@ -20,6 +20,18 @@ ONE_FOR_ONE = {"payment": -1.0, "credit": -1.0}
 SHORT_TERM_BOXES = set("ABCGHI")
 
 
+# The largest amount any act may carry. A JSON number like 1e999 parses as infinity, and a 400-digit
+# integer cannot become a float; either one, stored in the append-only log, would break every screen
+# that reads it. Real amounts are nowhere near this.
+AMOUNT_LIMIT = 10**15
+
+
+def is_amount(value) -> bool:
+    """A real number of sane size (bools are not amounts)."""
+    return (isinstance(value, (int, float)) and not isinstance(value, bool)
+            and -AMOUNT_LIMIT < value < AMOUNT_LIMIT)   # also false for inf and nan
+
+
 def round_half_up(x: float) -> int:
     return int(math.copysign(math.floor(abs(x) + 0.5), x))
 

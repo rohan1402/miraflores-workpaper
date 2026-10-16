@@ -121,7 +121,7 @@ def ref_kind(ref: str) -> str:
         return "value"
     if ref.startswith("doc:") and "#page" in ref:
         return "page"
-    if len(ref) == 3 and ref[0] == "D" and ref[1:].isdigit():
+    if len(ref) == 3 and ref[0] == "D" and ref[1:].isascii() and ref[1:].isdigit():
         return "document"
     if ref.startswith(("qa-", "msg-", "call-")):
         return "client"

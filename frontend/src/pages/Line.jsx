@@ -7,7 +7,7 @@ import { ActionBar, useCan } from "../components/Act.jsx";
 import { AdjustForm, AttachForm, NoteForm, QuestionForm, VerifyForm } from "../components/Forms.jsx";
 import PageText, { printedValue, valueNeedles } from "../components/PageText.jsx";
 import { LineTable } from "./Area.jsx";
-import { date, dateTime, figure, money, VERIFICATION_LABEL } from "../format.js";
+import { date, dateTime, figure, labelFor, money, VERIFICATION_LABEL } from "../format.js";
 import { href } from "../router.js";
 
 export default function Line({ lineKey, names, refreshKey }) {
@@ -173,7 +173,7 @@ export default function Line({ lineKey, names, refreshKey }) {
           <ul className="plain">
             {verifications.map((v) => (
               <li key={v.event}>
-                {names[v.by] || v.by}, {VERIFICATION_LABEL[v.type] || v.type}, {date(v.at)}
+                {names[v.by] || v.by}, {labelFor(VERIFICATION_LABEL, v.type)}, {date(v.at)}
               </li>
             ))}
           </ul>

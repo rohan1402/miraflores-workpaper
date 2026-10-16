@@ -54,6 +54,12 @@ export function initials(name = "") {
     .toUpperCase();
 }
 
+// A label for a key from the server, or the key itself. Only the map's own keys count, so a value
+// such as "__proto__" can never pull an object out of the map and into the screen.
+export function labelFor(map, key) {
+  return Object.hasOwn(map, key) ? map[key] : String(key ?? "");
+}
+
 export const ROLE_LABEL = {
   preparer: "Preparer",
   reviewer: "Reviewer",

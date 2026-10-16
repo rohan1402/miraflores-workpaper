@@ -301,7 +301,7 @@ Code: `backend/workpaper/views_firm.py`; screen `pages/Firm.jsx`, `pages/Search.
 - **View log**: the existing log of unmasked views and file opens, now on the firm page for the partner and the administrator.
 - Status is the filing stage and the deadlines. The firm's twelve required steps are not built as a checklist, and not in the roll-forward step either (D26).
 
-## Roll-forward build decisions (2026-10-15; Rohan's answers LOCKED, implementation OPEN until he reviews)
+## Roll-forward build decisions (LOCKED 2026-10-15, after Rohan's review)
 
 Carrying 2025 into 2026 for next year's preparer (the 2027-01-15 event): the carryovers and the 2026 estimates (D26). Rohan answered four questions before the build.
 
@@ -321,7 +321,7 @@ The plan computes 110% of 2025 California tax (30/40/30 on April 15, June 15 and
 
 A read-only "2026 opening" screen built from the return as filed: carryovers with their history, the asset register's ending depreciation (federal, California, AMT), and the 2026 estimates. Plus a one-file export like the examiner's. No new act; it updates if 2025 is amended.
 
-### D34. How the roll-forward is built: OPEN
+### D34. How the roll-forward is built: LOCKED (with two fixes and the AMT column)
 
 Code: `backend/workpaper/rollforward.py`; screen `pages/RollForward.jsx` ("2026 opening"); routes `/api/rollforward` and `/api/rollforward/export`.
 
@@ -331,6 +331,26 @@ Code: `backend/workpaper/rollforward.py`; screen `pages/RollForward.jsx` ("2026 
 - **The return as filed** is the projection up to the last filed transmission, with its own checker run. An open amendment does not move the opening until the amended return is filed. The California method decision is read from the current log, since it is made after filing.
 - **The 2026 estimates**: 110% of the 2025 total tax (federal four equal installments, the last taking the rounding; California 30/40/30), each installment marked when its due date has passed. The 100% rule below $150,000 of AGI is kept for completeness; this household is above it on both.
 - **The California method** is a judgment call on `plan:california_estimates_2026`, with authority. It is allowed after filing: a planning decision is about 2026, so the freeze lets it through, while a judgment call on the filed return is still refused.
+- **Changed: a 90% choice needs a number, and the installments follow it.** The judgment names its method: `safe_harbor` (110% of 2025 California tax) or `projected`, which must carry the projected 2026 California tax. The installments to pay are 30/40/30 of 90% of that figure, and the 110% schedule stays beside it as the safe harbor. With no choice yet, the plan shows the safe harbor and the overpay note, and no amount is marked as the one to pay. A decision without a usable method (one recorded before this rule) sets no amount; the server check and the projection share one test (`usable_plan`).
+- **Changed: the moved lines are named in the file.** The flag lists only the lines that actually moved under a carryover (for the Form 8801 credit, the corrected lines among the 485 it walks through), on the screen as text and in the export, not only in a tooltip.
+- **The AMT difference is on each asset row**, on the screen and in the file. On this return it is zero for every asset, which is the fact to carry.
+- **From the review of these fixes** (three reviewers, each finding put to a skeptic; six confirmed, none refuted):
+  - Every number an act carries must be a real amount: finite and below 10^15. A JSON `1e999` parses as infinity and a 400-digit integer cannot become a float; either one, once in the append-only log, broke the roll-forward, its export and the event log. The check runs once, at the start of `actions.prepare`, for every action, so it also covers an adjustment's figure, hours and firm standards.
+  - The projected 2026 California tax is in whole dollars, so the screen and the file show the same arithmetic.
+  - A method that is not a string (a list, an object) is refused with a 422, not a 500.
+  - A line the engine never had (the page 32 lot F8949.B.M18, the C6 lot in box K) counts under the carryovers its siblings feed, so it is named when it is corrected or added.
+
+## Hardening (2026-10-15, OPEN until Rohan reviews)
+
+### D35. Only well-formed acts reach the log, and reads survive bad input: OPEN
+
+Found by adversarial review workflows run on the D34 fixes: two reviews of the fixes, then repeated hunts for any request that stores an event which later breaks a read, until a round came back dry. Several cases predate this step (they go back to step 2). The log is append-only, so one malformed event would break every screen that replays it, permanently: an undo cannot reach it, a restart replays it again, and the live site has no login, so anyone can send one.
+
+- **A schema at the door** (`actions.prepare`, before anything is computed or stored). Each act takes a fixed set of keys from the browser, each of a fixed type (`PAYLOAD_KEYS`): text, a real amount (finite, below 10^15, not a bool), a whole number, true or false, a list of page numbers, a date, or for a standard a number, a sentence or a list of entries. Keys an act does not take are dropped, since the server computes everything derived; a key of the wrong type is refused. Every text, target and reason must be valid UTF-8 (a lone UTF-16 surrogate, the JSON escape `\ud800`, is refused). Every target must be a well-formed reference of a known kind (`event:`, page and document references carry plain ASCII digits; `²` is a digit to Python's `isdigit()` but not to `int()`), and acts that take one event take exactly one. A verification type is a plain name in lower case, since it becomes a label on the screen.
+- **Per act**: a planning decision answers no finding (so it cannot slip a finding past the freeze); a firm standard changes one field at a time and keeps its type (naming a group such as `variance_review` is refused); an approval names only adjustments over the threshold; a notice answer cites evidence that exists (a line, an arrived document, a client answer, an attached file); files are attached only through `/api/attachments`, which stores the file, and an upload checks its tip before storing anything.
+- **Defense in depth**: the replay reads a malformed `event:` reference as nothing, the checker and the large-acceptance list ignore a `finding` or an `authority` that is not a string, and the masker ignores a `value_type` that is not a string. JSON responses are written ASCII-escaped and the HTML exports replace anything that cannot be written as UTF-8, so text already in a log cannot fail a response. A call note's list of notes reads as one text. On the screen, labels are looked up only for a map's own keys. So even an event written before these checks cannot break a projection, a response or a page.
+- **Reads answer bad input with a 4xx**: `as_of` must be a date or a timestamp, the estimate preview needs a real amount, `/api/events?after=` and the stream's `Last-Event-ID` are clamped to the log, and an unmask of a malformed page reference is not found.
+- Tests: `backend/tests/test_hardening.py`, one case per reproduced failure. Three hunt rounds: the first two found eight ways to poison the log (all fixed), the third found none.
 
 ## Build plan
 

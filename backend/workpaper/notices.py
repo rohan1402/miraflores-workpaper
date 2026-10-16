@@ -157,7 +157,9 @@ def client_words(item: dict) -> dict:
     if item.get("kind") == "message":
         return {"text": item["text"], "from": item.get("from"), "at": item["at"]}
     if item.get("kind") == "call_note":
-        return {"text": item["notes"], "from": ", ".join(item.get("participants", [])), "at": item["at"]}
+        notes = item["notes"]
+        return {"text": " ".join(map(str, notes)) if isinstance(notes, list) else str(notes),
+                "from": ", ".join(map(str, item.get("participants", []))), "at": item["at"]}
     return {"text": None, "from": None, "at": None}
 
 

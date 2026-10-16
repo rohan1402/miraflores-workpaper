@@ -1,11 +1,11 @@
 // Small shared pieces: state badges, reference links, loading and error boxes.
-import { MACHINE, SEVERITY_LABEL, VERIFICATION_LABEL, date, initials } from "../format.js";
+import { MACHINE, SEVERITY_LABEL, VERIFICATION_LABEL, date, initials, labelFor } from "../format.js";
 import { linkFor } from "../router.js";
 
 // Machine state: a thin outlined badge. It never says "verified" (D2).
 export function MachineBadge({ state }) {
   if (!state) return null;
-  const m = MACHINE[state] || { label: state, tone: "muted" };
+  const m = (Object.hasOwn(MACHINE, state) && MACHINE[state]) || { label: state, tone: "muted" };
   return <span className={`badge machine tone-${m.tone}`}>{m.label}</span>;
 }
 
@@ -14,7 +14,7 @@ export function HumanBadge({ human, names }) {
   if (!human) return null;
   const who = initials(names?.[human.by] || human.by);
   if (human.state === "adjusted") return <span className="badge human adjusted" title={`Adjusted by ${names?.[human.by] || human.by}`}>Adjusted · {who}</span>;
-  const type = VERIFICATION_LABEL[human.type] || human.type;
+  const type = labelFor(VERIFICATION_LABEL, human.type);
   return (
     <span className={`badge human ${human.state}`} title={`${type}, ${date(human.at)}`}>
       {human.state === "stale" ? "Verified, value since changed" : "Verified"} · {who}

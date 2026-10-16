@@ -97,11 +97,12 @@ def _mark_answered(findings: list[Finding], state: State) -> None:
         if e.id in state.undone or e.action in ("undo", "note", "review_note"):
             continue
         refs = [t[len("finding:"):] for t in e.targets if t.startswith("finding:")]
-        if e.payload.get("finding"):
+        if isinstance(e.payload.get("finding"), str):   # only a finding id answers a finding
             refs.append(e.payload["finding"])
         for ref in refs:
             if e.action == "judgment_call":
-                if (e.payload.get("authority") or "").strip():
+                authority = e.payload.get("authority")
+                if isinstance(authority, str) and authority.strip():
                     answered[ref] = ("accepted", e.id)
                 else:
                     missing_authority[ref] = e.id

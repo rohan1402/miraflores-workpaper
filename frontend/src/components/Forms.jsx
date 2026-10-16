@@ -678,21 +678,33 @@ export function StandardForm({ path, current, tip, onDone }) {
 }
 
 // A planning decision for 2026 (D32): which estimate method the firm uses, and the authority for it.
+// The 90% method carries the projected 2026 California tax; the server works out the installments.
 export function PlanDecisionForm({ planRef, tip, onDone }) {
   const { run, busy, error } = useAct();
-  const [decision, setDecision] = useState("");
+  const [method, setMethod] = useState("projected");
+  const [projected, setProjected] = useState("");
   const [authority, setAuthority] = useState("");
   const [reason, setReason] = useState("");
   const submit = async (e) => {
     e.preventDefault();
-    if (await run({ action: "judgment_call", targets: [planRef], payload: { decision, authority }, reason, tip })) onDone?.();
+    const payload = method === "projected"
+      ? { method, projected_2026_tax: Number(projected), decision: `Pay 90% of projected 2026 California tax of ${money(Number(projected))}`, authority }
+      : { method, decision: "Pay the 110% safe harbor", authority };
+    if (await run({ action: "judgment_call", targets: [planRef], payload, reason, tip })) onDone?.();
   };
   return (
     <form onSubmit={submit}>
       <Field label="Method">
-        <input value={decision} onChange={(e) => setDecision(e.target.value)} autoFocus
-               placeholder="e.g. 90% of projected 2026 California-source tax" />
+        <select value={method} onChange={(e) => setMethod(e.target.value)}>
+          <option value="projected">90% of projected 2026 California tax</option>
+          <option value="safe_harbor">110% of 2025 California tax (safe harbor)</option>
+        </select>
       </Field>
+      {method === "projected" && (
+        <Field label="Projected 2026 California tax" hint="California-source income only, after the move.">
+          <input type="number" min="0" step="1" value={projected} onChange={(e) => setProjected(e.target.value)} autoFocus />
+        </Field>
+      )}
       <Field label="Authority relied on" hint="Required by the firm for every judgment call.">
         <input value={authority} onChange={(e) => setAuthority(e.target.value)} placeholder="e.g. R&TC 19136.3" />
       </Field>
@@ -700,7 +712,7 @@ export function PlanDecisionForm({ planRef, tip, onDone }) {
         <textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)} />
       </Field>
       <ActError error={error} />
-      <Submit busy={busy} disabled={!decision.trim() || !authority.trim()} onCancel={onDone}>
+      <Submit busy={busy} disabled={!authority.trim() || (method === "projected" && projected === "")} onCancel={onDone}>
         Record the method
       </Submit>
     </form>
