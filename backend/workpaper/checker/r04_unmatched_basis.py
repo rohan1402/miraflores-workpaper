@@ -72,7 +72,7 @@ def _unmatched(ctx: Context, doc_id: str, lots: list) -> Finding:
     for key, line, basis_ev, sold_ev, match in lots:
         new_basis = match["basis"]["value"]
         box = key.split(".")[1]
-        old = ctx.value(key)
+        old = ctx.engine(key)
         ca_cat = ctx.ca_effect_category_for_sale(sold_ev["value"]) if sold_ev else None
         effect = estimate(ctx.rates, federal=[(gain_category(box), -new_basis)],
                           california=[(ca_cat, -new_basis)] if ca_cat else [])

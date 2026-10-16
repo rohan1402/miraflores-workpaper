@@ -122,7 +122,7 @@ def _drafted_basis(ctx: Context, lines: list[str], text: str):
     box = key.split(".")[1]
     new_box = {"G": "J", "H": "K", "I": "L", "A": "D", "B": "E", "C": "F"}.get(box, box) if long_term else box
     new_gain = round(proceeds - cost, 2)
-    old_gain = ctx.value(key)
+    old_gain = ctx.engine(key)
     new_key = key.replace(f".{box}.", f".{new_box}.")
     fed = [("stcg" if box in "ABCGHI" else "ltcg", -old_gain), ("ltcg" if long_term else "stcg", new_gain)]
     ca_cat = ctx.ca_effect_category_for_sale(sold_ev["value"])

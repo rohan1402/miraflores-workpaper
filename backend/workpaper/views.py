@@ -23,6 +23,7 @@ from .project import (
 )
 from .roles import home_config, verbs
 
+
 MACHINE_PRIORITY = ["disagreement", "conflict", "stale", "open_item", "prompt", "variance"]
 
 # The two-year strip (D1): (jurisdiction, name, label, 2025 line, 2024 line, sign of the 2024 line)
@@ -174,12 +175,14 @@ def _account(packet: Packet, result: CheckResult, doc_id: str, lots: list[dict])
 
 
 def _findings_by_line(result: CheckResult) -> dict[str, list]:
+    """The open findings flagged on each line, leaving out a line the finding's fixes have already corrected."""
     out = defaultdict(list)
     for f in result.findings:
         if f.status != "open":
             continue
+        corrected = {c.line for c in f.changes} - {c.line for c in f.changes if c.applied_by is None}
         for t in f.targets:
-            if t.startswith("line:"):
+            if t.startswith("line:") and t[len("line:"):] not in corrected:
                 out[t[len("line:"):]].append(f)
     return out
 
@@ -256,7 +259,7 @@ def line_trace(packet: Packet, state: State, result: CheckResult, key: str) -> d
                          "partner_approved": a.event_id in state.partner_approvals}
                         for a in state.adjustments.get(key, [])],
         "verifications": [_verification(v) for v in state.verifications.get(f"line:{key}", [])],
-        "findings": [finding_view(f) for f in result.findings if f"line:{key}" in f.targets],
+        "findings": [finding_view(f, state, result) for f in result.findings if f"line:{key}" in f.targets],
     }
 
 
@@ -395,7 +398,7 @@ def document_view(packet: Packet, state: State, result: CheckResult, scopes: Con
         "not_used_because": None if landed else _why_not_used(d, state, findings),
         "reconciliation": next((r for r in result.reconciliations if r.get("document") == doc_id), None),
         "pages": pages,
-        "findings": [finding_view(f) for f in findings],
+        "findings": [finding_view(f, state, result) for f in findings],
     }
 
 
@@ -443,7 +446,7 @@ def findings_view(state: State, result: CheckResult, scopes: ConflictRule, area:
     return {
         "meta": meta(state),
         "rules": {rule: title for rule, (title, _) in RULES.items()},
-        "findings": [finding_view(f) for f in found],
+        "findings": [finding_view(f, state, result) for f in found],
         "corrected_lines": result.corrected_lines,
         "net_effect": result.net_effect,
         "reconciliations": result.reconciliations,
@@ -464,24 +467,45 @@ def release_preview(state: State) -> dict:
     }
 
 
-def finding_view(f) -> dict:
-    """A finding as the browser sees it, plus two answers the browser does not work out itself:
-    the fix the card offers (a new figure for a line on the return, or a line the finding says to add),
-    and whether accepting it as is would reach the partner (D20: effect over the firm threshold)."""
-    effect = f.effect
-    fix = next((c for c in f.changes if isinstance(c.proposed, (int, float)) and c.counted_in is None
-                and (c.original is not None or c.adds)), None)
-    return {**f.as_dict(),
-            "fix": {"line": fix.line, "from": fix.original, "to": fix.proposed,
-                    "adds": fix.adds["label"] if fix.adds else None} if fix else None,
+def finding_view(f, state: State, result: CheckResult) -> dict:
+    """A finding as the browser sees it, plus three answers the browser does not work out itself: the
+    fixes the card offers, what accepting it as is would leave out of the total (each piece once, D37),
+    and whether that would reach the partner (D20: effect over the firm threshold)."""
+    effect = result.acceptance_effect([f.id]) if f.status == "open" else None
+    return {**f.as_dict(), "fixes": card_fixes(f, state, result),
+            "accept_effect": effect.as_dict() if effect else None,
             "partner_if_accepted": bool(effect) and (
                 abs(effect.federal) > PARTNER_THRESHOLD or abs(effect.california) > PARTNER_THRESHOLD)}
 
 
-def estimate_preview(state: State, key: str, to: float, adds: dict | None = None) -> dict:
-    """The estimated effect an adjustment would store, before anyone saves it (`adds`: a line to add)."""
+def card_fixes(f, state: State, result: CheckResult) -> list[dict]:
+    """One fix per line (D37): from the figure on the return now to the line's documented figure, with
+    the estimate still open on it. Several pieces on one line make one figure (the phone and the
+    internet on SchC.25 give 2,172). Lines already corrected, lines whose pieces only follow, and
+    pieces that would remove a line are not offered; a line the return lacks is offered only when the
+    finding says how to add it."""
+    from .checker import decides
+    if f.status != "open":
+        return []
+    out = []
+    for line in dict.fromkeys(c.line for c in f.changes):
+        mine = [c for c in f.changes if c.line == line]
+        st = result.lines.get(line)
+        if st is None or st.target is None or all(c.applied_by is not None for c in mine) \
+                or not any(decides(state, c) for c in mine):
+            continue
+        effect = st.left if st.left is not None else st.effect
+        adds = next((c.adds for c in mine if c.adds), None) if line not in state.lines else None
+        out.append({"line": line, "from": state.line_value(line) if line in state.lines else None, "to": st.target,
+                    "effect": effect.as_dict() if effect else None, "adds": adds["label"] if adds else None})
+    return out
+
+
+def estimate_preview(state: State, key: str, to: float, adds: dict | None = None, result: CheckResult | None = None) -> dict:
+    """The estimated effect an adjustment would store, before anyone saves it (`adds`: a line to add).
+    A figure that lands on a line's documented figure previews the card's estimate, as the save will store (D37)."""
     original = state.line_value(key)
-    effect = estimate_adjustment(state, key, original, to, line=adds)
+    effect = (result.estimate_for(key, to, state) if result else None) or estimate_adjustment(state, key, original, to, line=adds)
     eff = effect.as_dict() if effect else None
     return {"line": key, "from": original, "to": to, "version": state.version_id, "effect": eff,
             "needs_partner": bool(eff) and (abs(eff["federal"]) > PARTNER_THRESHOLD

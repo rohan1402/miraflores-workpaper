@@ -43,7 +43,7 @@ def _repairs(ctx: Context) -> list[Finding]:
         if not line["label"].lower().startswith("repairs"):
             continue
         column = key[-1] if key.startswith("SchE.") else None
-        address = ctx.value(f"SchE.1{column}") if column else None
+        address = ctx.engine(f"SchE.1{column}") if column else None
         if not isinstance(address, str):
             continue
         street = address.split(",")[0].strip()  # '1450 Fremont Way, Sacramento CA' -> '1450 Fremont Way'
@@ -67,7 +67,7 @@ def _improvement(ctx: Context, key: str, line: dict, invoice: dict, total: dict,
     first_year = _first_year_depreciation(amount, placed) if placed else 0.0
     net_income_change = amount - first_year
     in_california = re.search(r"\bCA\b", address) is not None
-    old = ctx.value(key)
+    old = ctx.engine(key)
     effect = estimate(ctx.rates, federal=[("ordinary_income", net_income_change)],
                       california=[("ca_source_income" if in_california else "ordinary_income", net_income_change)])
     effect.workings.append("Rental losses are subject to the passive loss limits; the engine would recompute them.")

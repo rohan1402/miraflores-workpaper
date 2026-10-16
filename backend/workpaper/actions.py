@@ -55,7 +55,9 @@ def prepare(packet: Packet, state: State, result: CheckResult, scopes: ConflictR
             adds = result.proposed_line(key)
             if adds is None:
                 raise Refusal(422, [f"{key} is not a line on {state.version_id}, and no finding proposes adding it."])
-        p = adjustment_payload(state, key, p.get("to"), p.get("finding"), adds=adds)
+        # A figure that lands on the line's documented figure stores the estimate its card shows (D37).
+        p = adjustment_payload(state, key, p.get("to"), p.get("finding"), adds=adds,
+                               effect=result.estimate_for(key, p.get("to"), state))
     elif action == "sign_off":
         area = _one(targets, "area")[len("area:"):]
         waiver = (p.get("waiver") or "").strip() or None
@@ -73,6 +75,8 @@ def prepare(packet: Packet, state: State, result: CheckResult, scopes: ConflictR
              "values": {t: _current_value(packet, state, t) for t in targets}}
     elif action == "judgment_call":
         p["effect"] = _accepted_effect(result, targets, p.get("finding"))
+        if figures := _accepted_figures(state, result, targets, p.get("finding")):
+            p["figures"], p["adjustments"] = figures, _accepted_adjustments(state, result, targets, p.get("finding"))
         if PLAN_CALIFORNIA in targets and usable_plan(p) and p.get("method") == "projected":
             p["projected_2026_tax"] = int(p["projected_2026_tax"])
     elif action == "correct_identity":
@@ -196,13 +200,33 @@ def _adjust(packet, state, result, scopes, person, e) -> list[str]:
     reasons = []
     if not e.reason:
         reasons.append("An adjustment needs a reason.")
+    finding_id = e.payload.get("finding")
+    if finding_id is not None:   # a fix made for a finding answers it, so it must be one open on this line (D37)
+        f = result.by_id(finding_id)
+        line = e.targets[0][len("line:"):]
+        if f is None or f.status != "open":
+            reasons.append(f"{finding_id} is not an open finding" + (f" (it is {f.status}, event {f.addressed_by})." if f else "."))
+        elif line not in {c.line for c in f.changes} and f"line:{line}" not in f.targets:
+            reasons.append(f"{finding_id} does not concern {line}.")
     if not is_amount(e.payload.get("to")):
         reasons.append("An adjustment needs a numeric new figure.")
+    elif e.payload.get("to") == e.payload.get("from"):
+        reasons.append(f"{e.targets[0][len('line:'):]} already shows {e.payload['to']:,}; an adjustment must change it.")
     return reasons
 
 
 def _judgment_call(packet, state, result, scopes, person, e) -> list[str]:
     reasons = []
+    named = _named_findings(e.targets, e.payload.get("finding"))
+    if len(set(named)) > 1:   # one row per finding on the partner's list; findings on the same dollars go together (D37)
+        reasons.append("A judgment call answers one finding at a time.")
+    for finding_id in named:
+        f = result.by_id(finding_id)
+        if f is None:
+            reasons.append(f"{finding_id} is not a finding on the return now.")
+        elif f.status != "open":   # a stale card, or a second acceptance (D37)
+            reasons.append(f"{finding_id} is already {f.status} (event {f.addressed_by}): there is nothing open "
+                           f"to accept. Undo that event to answer it again.")
     if not _words(e.payload.get("authority")):
         reasons.append("Every judgment call records the authority relied on (firm rule).")
     if not _words(e.payload.get("decision")):
@@ -466,10 +490,31 @@ def _waived(result: CheckResult, scopes: ConflictRule, area: str) -> list[dict]:
 
 def _accepted_effect(result: CheckResult, targets: list[str], finding: str | None) -> dict:
     """What accepting a finding leaves out of the total: its estimated effect at the moment of the
-    judgment call (D20). Computed here, so a figure the browser sends is never stored."""
-    ids = [t[len("finding:"):] for t in targets if t.startswith("finding:")] + ([finding] if finding else [])
-    effects = [f.effect for f in result.findings if f.id in ids and f.effect]
-    return {"federal": sum(e.federal for e in effects), "california": sum(e.california for e in effects)}
+    judgment call (D20), each piece once (D37). Computed here, so a figure the browser sends is never stored."""
+    effect = result.acceptance_effect(_named_findings(targets, finding))
+    return {"federal": effect.federal if effect else 0, "california": effect.california if effect else 0}
+
+
+def _named_findings(targets, finding) -> list[str]:
+    return [t[len("finding:"):] for t in targets if t.startswith("finding:")] + ([finding] if isinstance(finding, str) else [])
+
+
+def _accepted_figures(state: State, result: CheckResult, targets: list[str], finding) -> dict:
+    """What an acceptance leaves as it is: the figure on each of the named finding's lines (D37). The
+    acceptance holds while those lines stay as they are; when one changes, the finding is judged again."""
+    ids = _named_findings(targets, finding)
+    return {f.id: {line: state.line_value(line) for line in dict.fromkeys(c.line for c in f.changes)}
+            for f in result.findings if f.id in ids and f.changes}
+
+
+def _accepted_adjustments(state: State, result: CheckResult, targets: list[str], finding) -> dict:
+    """And the adjustments behind those figures: the same figure reached another way is not the same line."""
+    ids = _named_findings(targets, finding)
+    applied: dict[str, list[int]] = {}
+    for a in state.applied_adjustments():
+        applied.setdefault(a.line, []).append(a.event_id)
+    return {f.id: {line: applied.get(line, []) for line in dict.fromkeys(c.line for c in f.changes)}
+            for f in result.findings if f.id in ids and f.changes}
 
 
 def _words(value) -> bool:

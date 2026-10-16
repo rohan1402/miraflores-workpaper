@@ -67,11 +67,28 @@ def _reconcile(ctx: Context, code: str, key: str, agency: list[dict], source: st
         return []
     agency_amounts = [(t["date"], float(t["amount"])) for t in agency if isinstance(t["amount"], (int, float))]
     agency_total = sum(a for _, a in agency_amounts)
-    claimed_total = ctx.value(key)
+    claimed_total = ctx.engine(key)
+    now = ctx.value(key)
+    moved = isinstance(now, (int, float)) and abs(now - claimed_total) > 0.005
     if abs(claimed_total - agency_total) <= 1:
-        ctx.reconciliations.append({"check": code, "line": key, "status": "ties",
-                                    "line_value": claimed_total, "agency_total": agency_total, "source": source})
-        return []
+        if not moved:
+            ctx.reconciliations.append({"check": code, "line": key, "status": "ties",
+                                        "line_value": claimed_total, "agency_total": agency_total, "source": source})
+            return []
+        # The engine agreed with the agency, and an adjustment moved the line away. The fix is to put
+        # it back: one piece of no change from the engine's figure, so what is open is the reverse of
+        # what the adjustment stored (D37).
+        return [Finding(
+            code=code, subject=key, rule="R05", kind=CONFLICT,
+            title="Payments do not agree with the agency record",
+            message=(f"{key} ({line['label']}) now shows {money(now)}; the {source} shows {money(agency_total)}. "
+                     f"The engine's {money(claimed_total)} agreed with the agency; an adjustment moved the line away."),
+            targets=[f"line:{key}"], evidence=[agency_ref], severity="error",
+            changes=[Change(key, claimed_total, claimed_total, f"{agency_ref}:moved",
+                            estimate(ctx.rates, **{jurisdiction: [("payment", 0.0)]}))],
+            details={"agency_total": agency_total, "line_value": claimed_total, "now": now, "source": source,
+                     "agency_payments": agency_amounts},
+        )]
 
     unmatched_agency = list(agency_amounts)
     claimed = _claimed_payments(ctx, line)
@@ -102,14 +119,19 @@ def _reconcile(ctx: Context, code: str, key: str, agency: list[dict], source: st
                               estimate(ctx.rates, **{jurisdiction: [("payment", residual)]})))
         explanations.append(f"The agency holds {money(residual)} the line does not claim.")
 
+    if isinstance(now, (int, float)) and abs(now - agency_total) <= 1:
+        # A person's adjustment already brought the line into agreement: record that it ties now.
+        ctx.reconciliations.append({"check": code, "line": key, "status": "ties", "line_value": now,
+                                    "agency_total": agency_total, "source": source, "after_adjustment": True})
     return [Finding(
         code=code, subject=key, rule="R05", kind=CONFLICT,
         title="Payments do not agree with the agency record",
         message=(f"{key} ({line['label']}) claims {money(claimed_total)}; the {source} shows "
                  f"{money(agency_total)}. Difference {money(abs(agency_total - claimed_total))}. "
-                 + " ".join(explanations)).strip(),
+                 + " ".join(explanations)
+                 + (f" The return now shows {money(now)}." if moved else "")).strip(),
         targets=[f"line:{key}"], evidence=evidence, severity="error", changes=changes,
-        details={"agency_total": agency_total, "line_value": claimed_total, "source": source,
+        details={"agency_total": agency_total, "line_value": claimed_total, "now": now, "source": source,
                  "agency_payments": agency_amounts},
     )]
 

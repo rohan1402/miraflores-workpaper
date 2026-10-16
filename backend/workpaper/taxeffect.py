@@ -62,6 +62,19 @@ class Effect:
                       workings=[w for e in effects for w in e.workings], federal_exact=fed, california_exact=ca)
 
 
+    @staticmethod
+    def less(effect: "Effect | None", stored: list[dict]) -> "Effect | None":
+        """What is left of an estimate once adjustments have stored part of it (D37)."""
+        if effect is None:
+            return None
+        fed = effect.federal_exact - sum(s.get("federal", 0) for s in stored)
+        ca = effect.california_exact - sum(s.get("california", 0) for s in stored)
+        note = ([f"less what this line's adjustments already stored: federal {sum(s.get('federal', 0) for s in stored):+,}, "
+                 f"California {sum(s.get('california', 0) for s in stored):+,}"] if stored else [])
+        return Effect(federal=round_half_up(fed), california=round_half_up(ca), workings=effect.workings + note,
+                      federal_exact=fed, california_exact=ca)
+
+
 def estimate(rates: dict, federal: list[tuple[str, float]] = (), california: list[tuple[str, float]] = ()) -> Effect:
     """federal / california: lists of (rate category, change in dollars).
 

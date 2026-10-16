@@ -266,7 +266,7 @@ def create_app(packet_path: Path | str = PACKET_PATH, db_path: Path | str | None
         adds = None if line in state.lines else result.proposed_line(line)
         if line not in state.lines and adds is None:
             raise HTTPException(404, f"No line {line} on {state.version_id}.")
-        return views.estimate_preview(state, line, to, adds)
+        return views.estimate_preview(state, line, to, adds, result)
 
     @app.get("/api/checker/summary")
     def checker_summary(person: dict = Depends(workpaper_reader)):

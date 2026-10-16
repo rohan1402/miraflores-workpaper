@@ -470,7 +470,7 @@ def test_a_superseded_document_is_refused_for_one_reason_only(client):
 
 
 def test_the_card_offers_to_add_the_missing_lot_and_the_preview_matches(client):
-    fix = {f["id"]: f for f in client.get("/api/findings", headers=as_(PRIYA)).json()["findings"]}[E15]["fix"]
+    fix = {f["id"]: f for f in client.get("/api/findings", headers=as_(PRIYA)).json()["findings"]}[E15]["fixes"][0]
     assert (fix["line"], fix["from"], fix["to"]) == ("F8949.B.M18", None, -60.0) and "Ironwood REIT" in fix["adds"]
     preview = client.get("/api/estimate?line=F8949.B.M18&to=-60", headers=as_(PRIYA)).json()["effect"]
     assert (preview["federal"], preview["california"]) == (-21, 0)   # sold after the move: no California effect

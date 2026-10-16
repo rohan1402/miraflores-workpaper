@@ -50,7 +50,7 @@ def snippet(text: str, amount: float, width: int = 60) -> str:
 def _line_took_client_number(ctx: Context) -> list[Finding]:
     findings = []
     for key, line in ctx.lines.items():
-        value = ctx.value(key)
+        value = ctx.engine(key)
         if not isinstance(value, (int, float)):
             continue
         answers = [ctx.packet.client_items[s] for s in line["sources"]
@@ -91,7 +91,7 @@ def _eligibility_bars_deduction(ctx: Context) -> list[Finding]:
     """Self-employed health insurance is not allowed for months the person could join an
     employer-subsidized plan, including a spouse's employer plan (IRC 162(l)(2)(B))."""
     key = "Sch1.17"
-    value = ctx.value(key)
+    value = ctx.engine(key)
     if not value:
         return []
     yes = [a for a in _answers(ctx)
@@ -201,7 +201,7 @@ def _business_share_finding(ctx: Context, item: dict, disallow: dict, quotes: li
         for key in ctx.lines_using({d["ev"]}):
             if key.startswith("SchC."):
                 # One correction per books account: two accounts on one line are two real corrections.
-                changes.append(Change(key, ctx.value(key), round(ctx.value(key) - d["amount"], 2), d["ev"], effect))
+                changes.append(Change(key, ctx.engine(key), round(ctx.engine(key) - d["amount"], 2), d["ev"], effect))
     return Finding(
         code="CLIENT_BUSINESS_SHARE", subject=item["id"], rule="R07", kind=CONFLICT,
         title="Client says part of a deducted expense is personal",
@@ -262,7 +262,7 @@ def _basis_answers_vs_prior_year(ctx: Context) -> list[Finding]:
     findings = []
     for a in _answers(ctx):
         if "basis" in a["question"].lower() and "ira" in a["question"].lower() and "none" in a["answer"].lower():
-            used = ctx.value("F8606.2")
+            used = ctx.value("F8606.2")   # the figure on the return now: a person could change it
             engine = (f"The engine used {money(used)} on F8606.2, which agrees with the documents."
                       if used == carried else f"F8606.2 shows {used}.")
             findings.append(Finding(

@@ -141,7 +141,7 @@ def _duplicate_page(ctx: Context, doc: dict, p1: int, p2: int, by_page: dict, si
             continue  # only a problem when the same line also uses the first copy
         dup = [ctx.packet.values[s] for s in line["sources"] if s in second_ids]
         overcount = sum(ev["value"] for ev in dup if isinstance(ev["value"], (int, float)))
-        old = ctx.value(key)
+        old = ctx.engine(key)
         new = old - overcount
         changes.append(Change(key, old, new, page))
         messages.append(f"{key} adds both copies: {money(old)} should be {money(new)}.")
@@ -180,6 +180,6 @@ def _rate_lines_downstream(ctx: Context, key: str, old: float, new: float, compo
         for src in line["sources"]:
             if src.startswith("ref:param."):
                 rate = ctx.packet.resolve(src)
-                if isinstance(rate, (int, float)) and abs(old * rate - ctx.value(k)) <= 1:
-                    out.append(Change(k, ctx.value(k), round(new * rate), component))
+                if isinstance(rate, (int, float)) and abs(old * rate - ctx.engine(k)) <= 1:
+                    out.append(Change(k, ctx.engine(k), round(new * rate), component))
     return out

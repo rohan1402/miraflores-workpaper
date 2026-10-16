@@ -37,7 +37,7 @@ def _stale(ctx: Context, key: str, line: dict, ref: str, used_year: int) -> Find
     foreign = next((ev for ev in ctx.source_values(line) if ev["value_type"] == "money"), None)
     if ref.startswith("ref:fx.") and foreign and isinstance(current, (int, float)):
         recomputed = round(foreign["value"] / current)
-        old = ctx.value(key)
+        old = ctx.engine(key)
         category = category_for_line(key)
         delta = recomputed - old
         effect = estimate(ctx.rates, federal=[(category, delta)], california=[(category, delta)]) if category else None

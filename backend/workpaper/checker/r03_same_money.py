@@ -63,7 +63,7 @@ def check(ctx: Context) -> list[Finding]:
 def contributions(ctx: Context, key: str) -> list[Contribution]:
     """The amounts that add up to a line, each tied to the document it came from."""
     line = ctx.lines[key]
-    total = ctx.value(key)
+    total = ctx.engine(key)
     if not isinstance(total, (int, float)):
         return []
     money_sources = [ev for ev in ctx.source_values(line)
@@ -78,7 +78,7 @@ def contributions(ctx: Context, key: str) -> list[Contribution]:
         for inp in line["inputs"]:
             inner = ctx.lines.get(inp)
             docs = {ev["document_id"] for ev in ctx.source_values(inner)} if inner else set()
-            value = ctx.value(inp)
+            value = ctx.engine(inp)
             if len(docs) == 1 and isinstance(value, (int, float)) and value:
                 parts.append(Contribution(value, docs.pop(), inp, None))
         return parts
@@ -134,10 +134,10 @@ def _finding(ctx: Context, key: str, inner: Contribution, outer: Contribution, w
     effect = estimate(ctx.rates, federal=[(category, -inner.amount)], california=[(category, -inner.amount)]) \
         if category else None
     if inner.ev:  # the amount is one of the line's own sources: take it out of that line
-        old = ctx.value(key)
+        old = ctx.engine(key)
         change = Change(key, old, old - inner.amount, inner.ev, effect)
     else:         # the amount is a whole input line: that line goes to zero
-        change = Change(inner.via, ctx.value(inner.via), 0, f"line:{inner.via}", effect)
+        change = Change(inner.via, ctx.engine(inner.via), 0, f"line:{inner.via}", effect)
     return Finding(
         code="SAME_MONEY_TWO_SOURCES", subject=f"{inner.via}:{inner.doc}", rule="R03", kind=CONFLICT,
         title="Same money from two documents",

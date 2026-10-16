@@ -36,6 +36,8 @@ class Change:
     same component of the same line describe the same dollars and are counted once; a second
     component on the same line is a second, real correction.
     `effect` is this piece's estimated tax effect; None for lines that only follow (totals, miles).
+    `original` is the engine's figure, never one a person adjusted, so a piece is a fixed fact about
+    the packet. The checker then sets `applied_by` when the line on the return already shows it.
     """
     line: str
     original: object
@@ -45,6 +47,13 @@ class Change:
     counted_in: str | None = None        # set when another finding already counts these same dollars
     counted_in_title: str | None = None  # that finding's title, for people to read
     adds: dict | None = None             # a line the return lacks: what a person's adjustment would add
+    applied_by: int | None = None        # the adjustment event after which the line shows this piece
+    left: Effect | None = None           # on a line moved but not corrected: what is still open (D37)
+    counted_in_accepted: bool = False    # the finding it is counted in was accepted: the dollars are left out there
+
+    @property
+    def open_effect(self) -> Effect | None:
+        return self.left if self.left is not None else self.effect
 
     @property
     def delta(self) -> float:
@@ -53,7 +62,8 @@ class Change:
     def as_dict(self) -> dict:
         return {"line": self.line, "from": self.original, "to": self.proposed, "component": self.component,
                 "effect": self.effect.as_dict() if self.effect else None, "counted_in": self.counted_in,
-                "counted_in_title": self.counted_in_title, "adds": self.adds}
+                "counted_in_title": self.counted_in_title, "adds": self.adds, "applied_by": self.applied_by,
+                "moved": self.left is not None}
 
 
 @dataclass
@@ -81,16 +91,19 @@ class Finding:
 
     @property
     def effect(self) -> Effect | None:
-        """The dollars this finding counts: its own pieces added exactly, rounded once.
-        Pieces another finding already counts are left out, so the cards add up to the total."""
-        return Effect.combine([c.effect for c in self.changes if c.counted_in is None])
+        """The dollars this finding still counts: its own pieces added exactly, rounded once. Pieces
+        another finding already counts are left out, so the cards add up to the total, and so are
+        pieces already applied to the return."""
+        return Effect.combine([c.open_effect for c in self.changes if c.counted_in is None and c.applied_by is None])
 
     @property
     def shared(self) -> list[dict]:
         """Pieces whose dollars are already counted in another finding (the same payment, found twice)."""
         return [{"line": c.line, "component": c.component, "counted_in": c.counted_in,
-                 "counted_in_title": c.counted_in_title, "effect": c.effect.as_dict() if c.effect else None}
-                for c in self.changes if c.counted_in is not None and c.effect is not None]
+                 "counted_in_title": c.counted_in_title, "accepted": c.counted_in_accepted,
+                 "effect": c.open_effect.as_dict()}   # what is still open of it, as the other card counts it
+                for c in self.changes if c.counted_in is not None and c.applied_by is None
+                and c.open_effect is not None and (c.open_effect.federal or c.open_effect.california)]
 
     def as_dict(self) -> dict:
         effect = self.effect
@@ -120,7 +133,13 @@ class Context:
         self.reconciliations: list[dict] = []
 
     def value(self, key: str):
+        """The figure on the return now, after people's adjustments."""
         return self.state.line_value(key)
+
+    def engine(self, key: str):
+        """The figure the engine computed. Corrections are measured from this, never from a figure a
+        person adjusted, so a rule does not propose its fix again on top of the fixed figure."""
+        return self.state.original_value(key)
 
     def visible(self, at: str | None) -> bool:
         """Was this item available at the projection's clock?"""

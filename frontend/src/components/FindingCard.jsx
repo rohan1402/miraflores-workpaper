@@ -9,8 +9,10 @@ import { figure, money } from "../format.js";
 export default function FindingCard({ finding, tip }) {
   const f = finding;
   const can = useCan();
-  // The fix the card offers comes from the server: a new figure for a line, or a line to add (a missing lot).
-  const fix = f.fix;
+  // The fixes come from the server, one per line still to correct (D37): the figure that applies this
+  // finding's pieces on that line, or a line to add (a missing lot). A fix stores the card's estimate.
+  const fixes = f.fixes || [];
+  const partly = f.status === "open" && f.changes.some((c) => c.applied_by || c.moved);
   const open = f.status === "open" && tip !== undefined;
   return (
     <article className={`finding sev-${f.severity} status-${f.status}`}>
@@ -23,7 +25,7 @@ export default function FindingCard({ finding, tip }) {
         </code>
         {f.status !== "open" && (
           <span className="tag ok" title="A person answered this finding">
-            {f.status} (event {f.addressed_by})
+            {f.status} (event {f.addressed_by}){f.details.accepted_with && " with the finding on the same dollars"}
           </span>
         )}
       </header>
@@ -40,7 +42,7 @@ export default function FindingCard({ finding, tip }) {
         <table className="changes">
           <tbody>
             {f.changes.map((c, i) => (
-              <tr key={i}>
+              <tr key={i} className={c.applied_by ? "applied" : ""}>
                 <td className="key">
                   <Ref value={`line:${c.line}`} />
                 </td>
@@ -49,6 +51,10 @@ export default function FindingCard({ finding, tip }) {
                 <td className="num">{c.to === null ? "removed" : figure(c.to, c.line)}</td>
                 <td className="muted small">
                   corrects {c.component}
+                  {c.applied_by && <span className="tag ok">applied (event {c.applied_by})</span>}
+                  {c.moved && f.status === "open" && (
+                    <span className="tag" title="The line was adjusted, but not to the documented figure">still open on the adjusted line</span>
+                  )}
                   {c.counted_in && (
                     <span className="tag" data-finding={c.counted_in}>
                       counted in “{c.counted_in_title}”
@@ -62,22 +68,30 @@ export default function FindingCard({ finding, tip }) {
       )}
       {f.effect && (
         <div className="effect small">
-          Tax effect: federal <span className="num">{signed(f.effect.federal)}</span>, California{" "}
+          {partly ? "Tax effect still open" : "Tax effect"}: federal <span className="num">{signed(f.effect.federal)}</span>, California{" "}
           <span className="num">{signed(f.effect.california)}</span> <Estimate />
           {f.status !== "open" && <span className="muted"> · not in the total ({f.status})</span>}
         </div>
       )}
       {f.shared.map((s, i) => (
-        // The same dollars found by two checks: shown once, in the finding that found them first.
+        // The same dollars found by two checks: shown once, in the finding that found them first, or
+        // left out by the acceptance of the other one (D37).
         <div key={i} className="effect small shared">
-          Tax effect: the same {sharedAmount(s.effect)} on {s.line} is already counted in{" "}
+          Tax effect: the same {sharedAmount(s.effect)} on {s.line} is already {s.accepted ? "accepted as is" : "counted"} in{" "}
           <span className="strong" data-finding={s.counted_in}>
             “{s.counted_in_title}”
           </span>{" "}
           ({s.line}). Not added again.
         </div>
       ))}
-      {f.details.page_dispositioned_by && (
+      {f.status === "open" && f.details.acceptance_changed && (
+        // D37: an acceptance holds while the finding's lines show the figures it saw, like a sign-off.
+        <div className="small warn">
+          Accepted as is in event {f.details.acceptance_changed.event}. Since then{" "}
+          {f.details.acceptance_changed.lines.join(", ")} changed, so that acceptance no longer holds: answer the finding again.
+        </div>
+      )}
+      {f.status === "open" && f.details.page_dispositioned_by && (
         // The page is named; the line it prints is not on the return yet, so its dollars still count.
         <div className="small">
           Page recorded as partial (event {f.details.page_dispositioned_by}). The line it prints is still missing from
@@ -107,14 +121,15 @@ export default function FindingCard({ finding, tip }) {
               render: (done) => <CorrectIdentityForm person={f.answer.person} documents={f.answer.documents} finding={f.id}
                                                      tip={tip} onDone={done} />,
             },
-            {
-              key: "fix", label: "Fix with an adjustment", primary: true, allowed: Boolean(fix) && can("adjust"),
-              render: (done) => <AdjustForm line={fix.line} current={fix.from} suggested={fix.to} adds={fix.adds} finding={f.id}
+            ...fixes.map((fx) => ({
+              key: `fix:${fx.line}`, label: fixes.length > 1 ? `Fix ${fx.line}` : "Fix with an adjustment", primary: true,
+              allowed: can("adjust"),
+              render: (done) => <AdjustForm line={fx.line} current={fx.from} suggested={fx.to} adds={fx.adds} finding={f.id}
                                             tip={tip} onDone={done} />,
-            },
+            })),
             {
               key: "accept", label: "Accept as is", allowed: can("judgment_call"),
-              render: (done) => <JudgmentForm finding={f.id} effect={f.effect} toPartner={f.partner_if_accepted} tip={tip} onDone={done} />,
+              render: (done) => <JudgmentForm finding={f.id} effect={f.accept_effect} toPartner={f.partner_if_accepted} tip={tip} onDone={done} />,
             },
             {
               key: "note", label: "Note", allowed: can("note"),

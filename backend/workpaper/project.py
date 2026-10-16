@@ -348,12 +348,15 @@ APPLY = {
 
 # ---- adjustments: what to store when a person adjusts --------------------------
 
-def adjustment_payload(state: State, key: str, to, finding: str | None = None, adds: dict | None = None) -> dict:
+def adjustment_payload(state: State, key: str, to, finding: str | None = None, adds: dict | None = None,
+                       effect: Effect | None = None) -> dict:
     """The payload an adjust event stores: from = the figure on screen, to, the version, and the
     estimated tax effect at this version's rates. The stored effect is what the partner signs.
-    `adds` describes a line the return does not have yet (from the finding that proposes it): from is None."""
+    `adds` describes a line the return does not have yet (from the finding that proposes it): from is None.
+    `effect`, when given, is the estimate of the checker pieces this figure puts on the return: the
+    one their cards show (D37). Otherwise the line's own rate is used."""
     original = state.line_value(key)
-    effect = estimate_adjustment(state, key, original, to, line=adds)
+    effect = effect or estimate_adjustment(state, key, original, to, line=adds)
     payload = {"from": original, "to": to, "version": state.version_id,
                "effect": {**effect.as_dict(), "rates_version": state.version_id} if effect else None}
     if finding:
@@ -404,11 +407,14 @@ def _sale_date(packet: Packet, key: str, line: dict) -> str | None:
 
 
 def effect_view(state: State, adj: Adjustment) -> dict:
-    """The stored effect, and a fresh estimate beside it when the rates have moved since."""
-    fresh = estimate_adjustment(state, adj.line, adj.original, adj.value)
-    fresh_d = fresh.as_dict() if fresh else None
+    """The stored effect, and a fresh estimate beside it when the return has moved to a version with
+    other rates since. A card fix stores the card's estimate, which can differ from the line's own
+    rate (D37); that is not a change of rates, so it shows no fresh figure."""
     stored = adj.effect
-    differs = bool(stored and fresh_d and (stored["federal"], stored["california"]) != (fresh_d["federal"], fresh_d["california"]))
+    moved = bool(stored) and stored.get("rates_version", adj.version) != state.version_id
+    fresh = estimate_adjustment(state, adj.line, adj.original, adj.value) if moved else None
+    fresh_d = fresh.as_dict() if fresh else None
+    differs = bool(fresh_d) and (stored["federal"], stored["california"]) != (fresh_d["federal"], fresh_d["california"])
     return {"stored": stored, "fresh": fresh_d if differs else None, "differs": differs}
 
 

@@ -64,7 +64,7 @@ def test_the_same_payment_found_twice_is_counted_in_one_card(result):
     assert first.effect.california == 3500
     assert second.effect is None
     assert second.shared == [{"line": "F540NR.72", "component": "ev-1075", "counted_in": first.id,
-                              "counted_in_title": "Payments do not agree with the agency record",
+                              "counted_in_title": "Payments do not agree with the agency record", "accepted": False,
                               "effect": second.changes[0].effect.as_dict()}]
 
 
@@ -230,7 +230,8 @@ def test_fixing_the_number_clears_the_finding(packet):
     events = log(ev("adjust", ["line:F1040.26"], reason="Agreed to IRS transcript",
                     payload={"from": 13000, "to": 12000, "finding": "ESTIMATES_VS_TRANSCRIPT:F1040.26"}))
     after = run_checker(packet, project(packet, events))
-    assert after.by_id("ESTIMATES_VS_TRANSCRIPT:F1040.26") is None
+    f = after.by_id("ESTIMATES_VS_TRANSCRIPT:F1040.26")   # still listed, now answered by the fix (D37)
+    assert (f.status, f.addressed_by, f.changes[0].applied_by) == ("addressed", 1, 1) and f.effect is None
     assert {"check": "ESTIMATES_VS_TRANSCRIPT", "line": "F1040.26", "status": "ties"}.items() <= next(
         r for r in after.reconciliations if r.get("line") == "F1040.26").items()
 

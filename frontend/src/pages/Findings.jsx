@@ -11,7 +11,8 @@ const SEVERITIES = { all: "All", error: "Errors", warning: "Warnings", info: "In
 export default function Findings({ params, refreshKey }) {
   const area = params.area;
   const { data, error } = useApi(`/api/findings${area ? `?area=${encodeURIComponent(area)}` : ""}`, refreshKey);
-  const [severity, setSeverity] = useState("error");
+  // Opens on every severity: four of the dollar errors are warnings, so an "Errors" view would hide them.
+  const [severity, setSeverity] = useState("all");
   if (error) return <ErrorBox error={error} />;
   if (!data) return <Loading />;
   const shown = data.findings.filter((f) => severity === "all" || f.severity === severity);

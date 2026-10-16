@@ -57,7 +57,7 @@ def _year_fields(ctx: Context) -> list[Finding]:
                          f"(read at {ev['confidence']})."),
                 targets=[f"line:{key}", ev["id"], amount["id"]], evidence=[f"doc:{ev['document_id']}#page{ev['page']}"],
                 severity="error",
-                changes=[Change(key, ctx.value(key), ctx.value(key) - amount["value"], amount["id"], effect)],
+                changes=[Change(key, ctx.engine(key), ctx.engine(key) - amount["value"], amount["id"], effect)],
                 details={"printed_year": ev["value"], "amount": amount["value"]},
             ))
     return findings
@@ -108,7 +108,7 @@ def _part_year_finding(ctx, doc, box16, fields, page, employer_state, window) ->
     if stub:
         ca_ytd = stub["ev"]["value"]
         drop = box16["value"] - ca_ytd
-        old = ctx.value(CA_WAGES_LINE)
+        old = ctx.engine(CA_WAGES_LINE)
         effect = estimate(ctx.rates, california=[("ca_source_income", -drop)])
         changes.append(Change(CA_WAGES_LINE, old, old - drop, box16["id"], effect))
         evidence.append(stub["ev"]["id"])
@@ -172,7 +172,7 @@ def _closing_proration(ctx: Context) -> list[Finding]:
         same_property = [ev for ev in ctx.source_values(line)
                          if address.group(1) in ctx.packet.documents[ev["document_id"]]["title"]
                          or address.group(1) in ctx.packet.document_text(ev["document_id"])]
-        value = ctx.value(HOME_PROPERTY_TAX_LINE)
+        value = ctx.engine(HOME_PROPERTY_TAX_LINE)
         if not same_property or not any(ev["value"] == value for ev in same_property):
             continue  # the line is not the full bill for this property, so the credit may already be out
         findings.append(_proration_finding(ctx, d, credit, address.group(1), value))
@@ -185,7 +185,7 @@ def _proration_finding(ctx: Context, closing: dict, credit: dict, address: str, 
     followers = []  # the total and the capped total move with line 5b; they carry no separate effect
     fed_itemized_change = -credit["value"]
     if ctx.lines.get("SchA.5d") and ctx.lines.get("SchA.5e"):
-        old_total, old_capped = ctx.value("SchA.5d"), ctx.value("SchA.5e")
+        old_total, old_capped = ctx.engine("SchA.5d"), ctx.engine("SchA.5e")
         new_total = old_total - credit["value"]
         cap = old_capped if old_total > old_capped else None   # the cap for this AGI, when it binds
         new_capped = min(new_total, cap) if cap is not None else new_total
