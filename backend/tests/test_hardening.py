@@ -218,3 +218,54 @@ def test_a_reference_number_is_written_in_plain_digits(client):
     for target in ("doc:D10#page²", "event:²", "D¹²"):
         refused(act(client, PRIYA, "note", [target], {"text": "t"}), "Not a reference the workpaper knows")
     assert client.post("/api/unmask", headers=as_(PRIYA), json={"ref": "doc:D09#page²"}).status_code == 404
+
+
+# ---- an upload's texts go through the same door, and nothing is written before they pass ----------
+
+def nothing_written(client, before, data):
+    import hashlib
+    store = client.app.state.snapshots.store
+    digest = hashlib.sha256(data).hexdigest()
+    assert tip(client) == before
+    assert store.attachment_meta(digest) is None and not (store.attachments_dir / digest[:2] / digest).exists()
+
+
+@pytest.mark.parametrize("name,note,targets", [
+    ("a.txt", "x" * 20_001, "line:SchC.18"),          # the note is over the text limit (422)
+    ("n" * 20_001, "", "line:SchC.18"),                 # so is the file name (the multipart parser refuses it first, 400)
+    ("a.txt", "", "line:SchC.18,nonsense"),             # a target the workpaper does not know (422)
+])
+def test_an_upload_is_judged_before_anything_is_written(client, name, note, targets):
+    data = f"evidence for {name[:10]} {len(note)} {targets}".encode()
+    before = tip(client)
+    r = client.post("/api/attachments", headers=as_(PRIYA), data={"targets": targets, "note": note, "base_tip": str(before)},
+                    files={"file": (name, data, "text/plain")})
+    assert 400 <= r.status_code < 500, r.text
+    nothing_written(client, before, data)
+
+
+def test_an_upload_from_a_role_that_may_not_attach_writes_nothing(client):
+    data = b"the examiner's file"
+    r = client.post("/api/attachments", headers=as_("irs-examiner"), data={"targets": "line:SchC.18", "base_tip": "0"},
+                    files={"file": ("x.txt", data, "text/plain")})
+    assert r.status_code == 403
+    nothing_written(client, 0, data)
+
+
+@pytest.mark.parametrize("field", ["file_name", "content_type", "note"])
+def test_upload_text_that_is_not_utf8_is_refused(field):
+    from workpaper.actions import Refusal, attachment_payload
+    texts = {"file_name": "a.txt", "content_type": "text/plain", "note": "ok", field: "bad \ud800 text"}
+    with pytest.raises(Refusal) as err:
+        attachment_payload("0" * 64, 3, texts["file_name"], texts["content_type"], texts["note"])
+    assert err.value.status == 422
+
+
+def test_a_good_upload_still_stores_the_file_and_its_event(client):
+    r = client.post("/api/attachments", headers=as_(PRIYA), data={"targets": "line:SchC.18", "note": "receipt", "base_tip": "0"},
+                    files={"file": ("receipt.pdf", b"%PDF-1.4 receipt", "application/pdf")})
+    assert r.status_code == 200
+    payload = r.json()["event"]["payload"]
+    assert (payload["file_name"], payload["content_type"], payload["text"], payload["size"]) == (
+        "receipt.pdf", "application/pdf", "receipt", 16)
+    assert client.get(f"/api/attachments/{payload['sha256']}", headers=as_(PRIYA)).content == b"%PDF-1.4 receipt"

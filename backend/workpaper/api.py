@@ -15,6 +15,7 @@ Run locally:  cd backend && ../.venv/bin/uvicorn workpaper.api:app --reload
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import threading
@@ -30,7 +31,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import views, views_filing, views_firm
-from .actions import Refusal, prepare, validate
+from .actions import Refusal, attachment_payload, prepare, validate
 from .areas import SIGNED_SCOPES
 from .checker import RULES, CheckResult, run_checker
 from .concurrency import ConflictRule
@@ -348,15 +349,15 @@ def create_app(packet_path: Path | str = PACKET_PATH, db_path: Path | str | None
         if not 0 <= base_tip <= store.tip():
             raise Refusal(422, ["base_tip is the newest event you have seen; it cannot be ahead of the log."])
         data = file.file.read()
+        # Everything is judged before anything is written (D35): the hash is worked out in memory, the
+        # three texts from the browser go through the text rule, then the role, targets and firm rules.
+        payload = attachment_payload(hashlib.sha256(data).hexdigest(), len(data), file.filename, file.content_type, note)
         state, result = snapshots.get()
         refs = [t.strip() for t in targets.split(",") if t.strip()]
         event = prepare(packet, state, result, scopes, person, "attach_evidence", refs, {}, None, base_tip)
-        digest = store.put_attachment(data, file.filename or "upload", file.content_type or "application/octet-stream",
-                                      person["id"])
-        event = Event(**{**event.__dict__, "payload": {"sha256": digest, "file_name": file.filename,
-                                                       "content_type": file.content_type, "size": len(data),
-                                                       "text": note}})
+        event = Event(**{**event.__dict__, "payload": payload})
         validate(packet, state, result, scopes, person, event)
+        digest = store.put_attachment(data, payload["file_name"], payload["content_type"], person["id"])  # same SHA-256
         stored = store.append(event)
         publish(stored)
         return {"event": views.event_view(stored), "sha256": digest}

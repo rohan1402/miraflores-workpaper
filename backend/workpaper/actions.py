@@ -503,7 +503,7 @@ PAYLOAD_KEYS = {
     "log_time": {"hours": AMOUNT, "on": DATE, "text": TEXT},
 }
 LONGEST_TEXT = 20_000
-DESCRIBE = {TEXT: "text", AMOUNT: "a real amount (finite, less than 1,000,000,000,000,000)",
+DESCRIBE = {TEXT: "text of at most 20,000 characters, valid UTF-8", AMOUNT: "a real amount (finite, less than 1,000,000,000,000,000)",
             INTEGER: "a whole number", FLAG: "true or false", PAGES: "a list of page numbers",
             DATE: "a date (2026-04-15)", STANDARD: "a number, a sentence or a list of entries"}
 
@@ -523,6 +523,20 @@ def _clean(action: str, payload: dict) -> dict:
     if wrong:
         raise Refusal(422, wrong)
     return clean
+
+
+def attachment_payload(digest: str, size: int, file_name, content_type, note) -> dict:
+    """What an upload records (D35): the file's hash and size, worked out by the server, and three
+    texts from the browser, which go through the same text rule as every other act (a string,
+    at most LONGEST_TEXT long, valid UTF-8). Refused before anything is written."""
+    texts = {"file_name": file_name or "upload", "content_type": content_type or "application/octet-stream",
+             "text": note if note is not None else ""}
+    labels = {"file_name": "The file name", "content_type": "The content type", "text": "The note"}
+    wrong = [f"{labels[key]} must be {DESCRIBE[TEXT]}." for key, value in texts.items() if not _is(TEXT, value)]
+    if wrong:
+        raise Refusal(422, wrong)
+    return {"sha256": digest, "file_name": texts["file_name"], "content_type": texts["content_type"],
+            "size": size, "text": texts["text"]}
 
 
 def _is(kind: str, value) -> bool:
